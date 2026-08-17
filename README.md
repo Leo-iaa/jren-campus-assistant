@@ -86,7 +86,7 @@
 | 阶段 | 内容 | 周期 |
 |------|------|------|
 | **Phase 0 · 设计** | 需求梳理、架构设计、仓库初始化 | ✅ 已完成 |
-| **Phase 1 · MVP（当前）** | 后端核心已就绪（11 表模型 / CRUD API / 测试）；待实现遗忘曲线调度与时间表规划算法、MCP 接入、前端 | 进行中 |
+| **Phase 1 · MVP（当前）** | 后端核心已就绪（11 表模型 / CRUD API / 调度算法 / MCP 接入 / 测试）；前端三页面已实现（今日计划 / 周视图 / 设置） | 进行中 |
 | **Phase 2 · V2** | 习惯自适应校准、PWA 移动端优化、主动提醒 | 4-6 周 |
 | **Phase 3 · V3** | 更多数据源、多用户云端部署、手机推送 | 待定 |
 
@@ -94,7 +94,7 @@
 
 ```text
 jren-campus-assistant/
-├── frontend/          # React + PWA 前端（待开发）
+├── frontend/          # React + Vite + TS + PWA 前端（今日计划 / 周视图 / 设置）
 ├── backend/           # FastAPI 后端
 │   ├── api/           # 路由层：健康检查 + 基础 CRUD + 数据源同步/OAuth
 │   ├── models/        # SQLAlchemy 数据模型（11 张表）
@@ -109,9 +109,11 @@ jren-campus-assistant/
 └── README.md
 ```
 
-## 🚀 快速开始（后端）
+## 🚀 快速开始
 
-> 环境要求：Python 3.11+。前端（React + PWA）将在后续阶段接入。
+### 后端
+
+> 环境要求：Python 3.11+。
 
 ```bash
 git clone https://github.com/Leo-iaa/jren-campus-assistant.git
@@ -137,6 +139,20 @@ python -m pytest
 ```
 
 健康检查：`curl http://127.0.0.1:8000/health` → `{"status":"ok","database":"connected"}`
+
+### 前端
+
+> 环境要求：Node.js 18+。
+
+```bash
+cd frontend
+npm install
+npm run dev        # 打开 http://localhost:5173（需后端已启动）
+npm run build      # 生产构建（PWA 可安装）
+npm run test       # 组件与纯函数测试
+```
+
+> 详细说明见 [frontend/README.md](frontend/README.md)。
 
 ## 🛠️ 开发流程约定
 
