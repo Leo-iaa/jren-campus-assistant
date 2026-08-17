@@ -96,12 +96,13 @@
 jren-campus-assistant/
 ├── frontend/          # React + PWA 前端（待开发）
 ├── backend/           # FastAPI 后端
-│   ├── api/           # 路由层：健康检查 + 7 组基础 CRUD
+│   ├── api/           # 路由层：健康检查 + 基础 CRUD + 数据源同步/OAuth
 │   ├── models/        # SQLAlchemy 数据模型（11 张表）
 │   ├── schemas/       # Pydantic 请求/响应模型（校验与枚举）
-│   ├── scheduler/     # 遗忘曲线 + 时间表规划（接口占位，算法待实现）
+│   ├── scheduler/     # 遗忘曲线 + 时间表规划 + 习惯校准（已实现）
+│   ├── mcp_client/    # MCP 数据接入层（Notion / Obsidian / iCal adapter）
 │   ├── scripts/       # 工具脚本（init_db.py 数据库初始化）
-│   ├── tests/         # pytest 测试（63 例）
+│   ├── tests/         # pytest 测试（173 例）
 │   └── data/          # SQLite 数据库文件（运行时生成，不入库）
 ├── docs/              # 设计文档
 ├── IDEA.md            # 想法与需求来源
@@ -154,3 +155,4 @@ python -m pytest
 
 - [架构设计文档](docs/architecture.md)
 - [产品愿景与需求](docs/vision.md)
+- [MCP 数据接入层使用说明](docs/mcp-client.md)

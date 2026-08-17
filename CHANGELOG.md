@@ -25,7 +25,15 @@
   - 自适应校准模块 `backend/scheduler/calibration.py`：按 课程 × 时段 × 难度 分桶统计「预估 vs 实际」，输出修正系数 factor；snapshot/load 可对接 `calibration_stats` 表
   - 调度器接口契约扩展（`ReviewDraft.ref_id` / `PlanItemDraft.release_slot`，向后兼容）
   - pytest 单元测试 60 例全部通过（全量 123 例，无回归）
+- MCP 数据接入层（#11）：
+  - `backend/mcp_client/` 包：JSON-RPC 2.0 传输层（stdio 子进程 / streamable HTTP + session 管理）、OAuth 2.0 授权码 + PKCE 客户端（端点/凭据全部可配置，测试全 mock）
+  - iCal adapter：解析教务系统导出 .ics（TZID=Asia/Shanghai、RRULE WEEKLY、同课程多 VEVENT 去重合并、DESCRIPTION 教室/教师兜底）→ `courses` + `course_sessions`；同步默认 merge 不覆盖手改字段，overwrite 模式全量覆盖，删除仍走手动 CRUD（手动维护兜底）
+  - Notion adapter：对接官方远程 MCP Server（mcp.notion.com/mcp），OAuth 起点/回调端点 + token 自动刷新；`query_database` → `tasks`（source='notion'，按 source_ref 幂等 upsert，属性名可配置，状态归一化）
+  - Obsidian adapter：obsidian-mcp-server（stdio）读 vault + 全文搜索；`vault_path` 直读兜底（不依赖 MCP 服务器）；只做查询接口，不落库
+  - data_sources API 增强：`POST /{id}/sync`（同步 + 更新 last_sync_at）、`POST /{id}/enable|disable`、`POST /notion/oauth/start|callback`
+  - 使用说明 `docs/mcp-client.md`；pytest 测试 50 例全部通过（全量 173 例，无回归）
 
 [#1]: https://github.com/Leo-iaa/jren-campus-assistant/issues/1
 [#7]: https://github.com/Leo-iaa/jren-campus-assistant/issues/7
 [#9]: https://github.com/Leo-iaa/jren-campus-assistant/issues/9
+[#11]: https://github.com/Leo-iaa/jren-campus-assistant/issues/11
