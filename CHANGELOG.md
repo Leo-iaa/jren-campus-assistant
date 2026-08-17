@@ -10,5 +10,6 @@
 - 产品愿景与需求文档 `docs/vision.md`
 - MIT 开源许可证
 - 开发流程约定（分支 / 提交信息 / PR 规范）
+- 产品设计定稿：课程档位制（S/A/B/C）复习策略、界面方案、流程时间轴（#3）
 
 [#1]: https://github.com/Leo-iaa/jren-campus-assistant/issues/1
