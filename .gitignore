@@ -19,9 +19,10 @@ build/
 *.key
 
 # Data
+data/*
+!data/.gitkeep
 *.sqlite
 *.sqlite3
-data/
 *.db
 
 # IDE & OS
@@ -33,3 +34,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# 测试缓存
+.pytest_cache/
