@@ -41,7 +41,9 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
-    host: true,
+    // 监听所有网卡：本机 localhost / 127.0.0.1 与局域网 IP（安卓真机 PWA 测试）都能访问
+    host: '0.0.0.0',
+    strictPort: true,
   },
   test: {
     environment: 'jsdom',
