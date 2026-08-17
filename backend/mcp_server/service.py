@@ -1,0 +1,665 @@
+"""计划编排服务：MCP Server 暴露层的业务核心。
+
+把 ``backend/scheduler/`` 的纯算法（规划器 / 校准器）与 ORM 数据组装成
+「生成 / 预览 / 确认 / 调整 / 完成 / 查询」能力，供 MCP 工具与 APScheduler
+定时任务共用。所有方法接收 ``sqlalchemy.orm.Session``，不感知 FastAPI / MCP。
+
+时间约定：
+- 日期一律使用 ``Asia/Shanghai`` 时区（对齐 docs/vision.md 时间轴）
+- 数据库时间字段为 'HH:MM' 文本、日期为 'YYYY-MM-DD' 文本（docs/database.md）
+
+生成语义（幂等、不破坏已确认计划）：
+- 某日已有 confirmed 计划项时不再自动重排（避免覆盖用户已确认的安排），
+  返回 skipped 说明，改动请走 adjust_plan_item
+- 其余情况（全部为 draft/adjusted 或混有 done）重新生成：仅替换 status 为
+  draft / adjusted 的旧计划项，done 项保留不动
+- 与保留项（done）起始时间冲突的新草案跳过并在结果中报告
+  （保持 UNIQUE(date, start_time)）
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from sqlalchemy.orm import Session
+
+from backend.models import (
+    CalibrationStat,
+    Course,
+    CourseSession,
+    KnowledgePoint,
+    MiscItem,
+    PlanItem,
+    PlanVersion,
+    ReviewSchedule,
+    Setting,
+    Task,
+)
+from backend.scheduler.calibration import TIME_BUCKETS
+from backend.scheduler.interfaces import PlanItemDraft
+from backend.scheduler.planner import build_plan_full
+
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+#: 计划项类型的 emoji 与中文名（预览文本用）
+ITEM_TYPE_LABELS: dict[str, tuple[str, str]] = {
+    "course": ("📚", "课程"),
+    "task": ("📝", "作业"),
+    "review": ("🔁", "复习"),
+    "misc": ("🗓", "杂项"),
+}
+
+#: 校准时段分桶（对齐 calibration_stats.time_bucket）
+_MORNING_END = time(12, 0)
+_AFTERNOON_END = time(18, 0)
+
+#: 默认时长（分钟），可用 settings 表覆盖
+DEFAULT_TASK_MINUTES = 60
+DEFAULT_REVIEW_MINUTES = 30
+
+
+# ---------- 结果数据结构 ----------
+
+
+@dataclass(frozen=True)
+class GeneratePlanResult:
+    """计划生成结果。"""
+
+    plan_date: date
+    placed_count: int
+    dropped: list[str] = field(default_factory=list)  # 放不下（时间不够）
+    skipped: list[str] = field(default_factory=list)  # 缺时长 / 与保留项冲突
+
+
+@dataclass(frozen=True)
+class ConfirmResult:
+    """计划确认结果。"""
+
+    plan_date: date
+    confirmed_count: int
+    version: int | None
+    notion_sync: dict | None = None  # Notion Calendar 写入结果或错误信息
+
+
+# ---------- 工具函数 ----------
+
+
+def shanghai_today() -> date:
+    """上海时区今天。"""
+    return datetime.now(_SHANGHAI).date()
+
+
+def tomorrow() -> date:
+    """上海时区明天。"""
+    return shanghai_today() + timedelta(days=1)
+
+
+def parse_date(value: str) -> date:
+    """解析 'YYYY-MM-DD'（非法抛 ValueError，中文报错）。"""
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"日期格式应为 YYYY-MM-DD，收到: {value!r}") from None
+
+
+def parse_hhmm(value: str) -> time:
+    """解析 'HH:MM'（非法抛 ValueError，中文报错）。"""
+    try:
+        return time.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"时间格式应为 HH:MM，收到: {value!r}") from None
+
+
+def _get_setting(db: Session, key: str, default: str) -> str:
+    """读取 settings 键值表（不存在返回默认值）。"""
+    row = db.query(Setting).filter(Setting.key == key).first()
+    return row.value if row is not None else default
+
+
+def _item_to_dict(item: PlanItem) -> dict:
+    """PlanItem → 字典（工具返回 / 快照用）。"""
+    return {
+        "id": item.id,
+        "date": item.date,
+        "start_time": item.start_time,
+        "end_time": item.end_time,
+        "item_type": item.item_type,
+        "ref_id": item.ref_id,
+        "title": item.title,
+        "status": item.status,
+    }
+
+
+def time_bucket_for(start_time: str) -> str:
+    """按开始时间映射校准时段分桶（morning/afternoon/evening）。"""
+    t = parse_hhmm(start_time)
+    if t < _MORNING_END:
+        return "morning"
+    if t < _AFTERNOON_END:
+        return "afternoon"
+    return "evening"
+
+
+# ---------- 生成 ----------
+
+
+def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
+    """生成某日建议计划并落库（draft 状态），返回放置 / 放不下 / 跳过明细。"""
+    task_minutes = int(_get_setting(db, "task_duration_minutes", str(DEFAULT_TASK_MINUTES)))
+    review_minutes = int(_get_setting(db, "review_duration_minutes", str(DEFAULT_REVIEW_MINUTES)))
+    if task_minutes <= 0 or review_minutes <= 0:
+        raise ValueError("设置 task_duration_minutes / review_duration_minutes 必须为正整数")
+
+    # 1. 固定课程块（当日星期几的课程时间块；B/C 档 release_slot=1 释放给其他任务）
+    sessions = (
+        db.query(CourseSession)
+        .join(Course, CourseSession.course_id == Course.id)
+        .filter(CourseSession.day_of_week == plan_date.weekday())
+        .order_by(CourseSession.start_time)
+        .all()
+    )
+    course_drafts = [
+        PlanItemDraft(
+            date=plan_date,
+            start=parse_hhmm(s.start_time),
+            end=parse_hhmm(s.end_time),
+            item_type="course",
+            ref_id=s.id,
+            title=s.course.name,
+            release_slot=bool(s.release_slot),
+        )
+        for s in sessions
+    ]
+
+    # 2. 作业任务（未完成且 deadline 未早于当日；无预估时长用默认值）
+    iso = plan_date.isoformat()
+    pending_tasks = (
+        db.query(Task).filter(Task.status.in_(["todo", "doing"])).order_by(Task.id).all()
+    )
+    task_drafts: list[PlanItemDraft] = []
+    for t in pending_tasks:
+        if t.deadline and (t.deadline[:10] < iso):
+            continue  # 已过期的任务不自动排（用户另行处理）
+        minutes = t.estimated_minutes or task_minutes
+        task_drafts.append(
+            PlanItemDraft(
+                date=plan_date,
+                start=time(0, 0),  # 占位：规划器只取 end-start 作为时长
+                end=_minutes_to_time(minutes),
+                item_type="task",
+                ref_id=t.id,
+                title=t.title,
+            )
+        )
+
+    # 3. 复习（当日到期且未完成；时长取设置）
+    due_reviews = (
+        db.query(ReviewSchedule)
+        .filter(
+            ReviewSchedule.due_date == iso,
+            ReviewSchedule.status.in_(["pending", "overdue"]),
+        )
+        .order_by(ReviewSchedule.id)
+        .all()
+    )
+    review_drafts: list[PlanItemDraft] = []
+    for rs in due_reviews:
+        kp = db.get(KnowledgePoint, rs.knowledge_point_id)
+        review_drafts.append(
+            PlanItemDraft(
+                date=plan_date,
+                start=time(0, 0),
+                end=_minutes_to_time(review_minutes),
+                item_type="review",
+                ref_id=rs.id,
+                title=f"复习 · {kp.title if kp else f'知识点#{rs.knowledge_point_id}'}",
+            )
+        )
+
+    # 4. 杂项（未完成；缺时长则跳过并报告）
+    misc_drafts: list[PlanItemDraft] = []
+    skipped: list[str] = []
+    for m in (
+        db.query(MiscItem).filter(MiscItem.status == "todo").order_by(MiscItem.id).all()
+    ):
+        minutes = m.duration_minutes
+        if not minutes or minutes <= 0:
+            skipped.append(f"杂项「{m.title}」缺少有效时长（duration_minutes），跳过")
+            continue
+        misc_drafts.append(
+            PlanItemDraft(
+                date=plan_date,
+                start=time(0, 0),
+                end=_minutes_to_time(minutes),
+                item_type="misc",
+                ref_id=m.id,
+                title=m.title,
+            )
+        )
+
+    # 5. 学习时段偏好（settings.study_hours，格式 'HH:MM-HH:MM'，非法则忽略）
+    study_hours = _parse_study_hours(_get_setting(db, "study_hours", ""))
+
+    # 6. 规划器求解（确定性贪心，保证不冲突 + UNIQUE(start)）
+    result = build_plan_full(
+        plan_date, course_drafts, task_drafts, review_drafts, misc_drafts, study_hours
+    )
+    dropped = [f"{ITEM_TYPE_LABELS[d.item_type][1]}「{d.title}」" for d in result.dropped]
+
+    # 7. 落库：替换 draft/adjusted，保留 done（防冲突占用起始分钟）；
+    #    已确认的计划不自动重排（避免覆盖用户安排）
+    iso = plan_date.isoformat()
+    has_confirmed = (
+        db.query(PlanItem.id)
+        .filter(PlanItem.date == iso, PlanItem.status == "confirmed")
+        .first()
+    )
+    if has_confirmed is not None:
+        return GeneratePlanResult(
+            plan_date=plan_date,
+            placed_count=0,
+            dropped=[],
+            skipped=["该日计划已确认，未重新生成（如需调整请使用 adjust_plan_item）"],
+        )
+
+    kept = (
+        db.query(PlanItem)
+        .filter(PlanItem.date == iso, PlanItem.status == "done")
+        .all()
+    )
+    kept_starts = {k.start_time for k in kept}
+    for old in (
+        db.query(PlanItem)
+        .filter(PlanItem.date == iso, PlanItem.status.in_(["draft", "adjusted"]))
+        .all()
+    ):
+        db.delete(old)
+
+    placed_count = 0
+    for draft in result.placed:
+        if draft.start.strftime("%H:%M") in kept_starts:
+            skipped.append(
+                f"{ITEM_TYPE_LABELS[draft.item_type][1]}「{draft.title}」"
+                f"与已确认项起始时间冲突，跳过"
+            )
+            continue
+        db.add(
+            PlanItem(
+                date=iso,
+                start_time=draft.start.strftime("%H:%M"),
+                end_time=draft.end.strftime("%H:%M"),
+                item_type=draft.item_type,
+                ref_id=draft.ref_id,
+                title=draft.title,
+                status="draft",
+            )
+        )
+        placed_count += 1
+
+    db.commit()
+    return GeneratePlanResult(
+        plan_date=plan_date,
+        placed_count=placed_count,
+        dropped=dropped,
+        skipped=skipped,
+    )
+
+
+def _minutes_to_time(minutes: int) -> time:
+    return time(minutes // 60, minutes % 60)
+
+
+def _parse_study_hours(value: str) -> tuple[time, time] | None:
+    """解析 'HH:MM-HH:MM' → (start, end)；空值 / 非法返回 None。"""
+    if not value or "-" not in value:
+        return None
+    start_raw, end_raw = value.split("-", 1)
+    try:
+        start, end = parse_hhmm(start_raw.strip()), parse_hhmm(end_raw.strip())
+    except ValueError:
+        return None
+    if end <= start:
+        return None
+    return start, end
+
+
+# ---------- 预览 ----------
+
+
+def preview_plan_text(db: Session, plan_date: date) -> str:
+    """今日/某日计划 → 微信友好文本（供 QClaw 08:00 推送）。"""
+    iso = plan_date.isoformat()
+    items = (
+        db.query(PlanItem)
+        .filter(PlanItem.date == iso)
+        .order_by(PlanItem.start_time, PlanItem.item_type)
+        .all()
+    )
+    weekday_cn = "一二三四五六日"[plan_date.weekday()]
+
+    lines = [f"📅 今日计划 · {iso} 周{weekday_cn}"]
+
+    if not items:
+        lines.append("")
+        lines.append("今天还没有安排。可以回复「生成明天的计划」，或去网页端手动添加。")
+        return "\n".join(lines)
+
+    # 状态行：全部 confirmed/done → 已确认；存在 draft/adjusted → 待确认
+    open_items = [it for it in items if it.status in ("draft", "adjusted")]
+    if open_items:
+        lines.append("⏳ 待确认")
+    else:
+        version = _latest_version(db, iso)
+        lines.append(f"✅ 已确认" + (f" v{version}" if version else ""))
+
+    for item_type in ("course", "task", "review", "misc"):
+        group = [it for it in items if it.item_type == item_type]
+        if not group:
+            continue
+        emoji, label = ITEM_TYPE_LABELS[item_type]
+        lines.append("")
+        lines.append(f"{emoji} {label}（{len(group)}）")
+        for it in group:
+            location = ""
+            if item_type == "course" and it.ref_id:
+                session = db.get(CourseSession, it.ref_id)
+                if session and session.location:
+                    location = f" · {session.location}"
+            lines.append(f"🕗 {it.start_time}-{it.end_time} {it.title}{location}")
+
+    lines.append("")
+    lines.append("💬 回复「确认今天的计划」；调整可说「把 XXX 挪到 HH:MM」。")
+    return "\n".join(lines)
+
+
+# ---------- 确认 ----------
+
+
+def confirm_plan(
+    db: Session,
+    plan_date: date,
+    calendar_writer=None,
+) -> ConfirmResult:
+    """确认某日计划：draft/adjusted → confirmed，并写入 plan_versions 快照。
+
+    ``calendar_writer`` 注入 Notion Calendar 写入器（可 mock）；确认成功后
+    尽力同步到日历，失败不阻断确认，结果写入 ``notion_sync`` 字段。
+    """
+    iso = plan_date.isoformat()
+    items = (
+        db.query(PlanItem)
+        .filter(PlanItem.date == iso, PlanItem.status.in_(["draft", "adjusted"]))
+        .order_by(PlanItem.id)
+        .all()
+    )
+    for item in items:
+        item.status = "confirmed"
+
+    version = None
+    if items:
+        version = (_latest_version(db, iso) or 0) + 1
+        db.add(
+            PlanVersion(
+                date=iso,
+                version=version,
+                payload=json.dumps([_item_to_dict(it) for it in items], ensure_ascii=False),
+                confirmed_at=datetime.now(_SHANGHAI).isoformat(timespec="seconds"),
+            )
+        )
+    db.commit()
+
+    notion_sync: dict | None = None
+    if calendar_writer is not None:
+        try:
+            sync_result = calendar_writer.sync_plan_to_calendar(db, plan_date)
+            notion_sync = {
+                "created": sync_result.created,
+                "updated": sync_result.updated,
+                "unchanged": sync_result.unchanged,
+            }
+        except Exception as exc:  # noqa: BLE001 —— 日历写入是双保险，失败不阻断确认
+            notion_sync = {"error": str(exc)}
+
+    return ConfirmResult(
+        plan_date=plan_date,
+        confirmed_count=len(items),
+        version=version,
+        notion_sync=notion_sync,
+    )
+
+
+def _latest_version(db: Session, iso: str) -> int | None:
+    row = (
+        db.query(PlanVersion)
+        .filter(PlanVersion.date == iso)
+        .order_by(PlanVersion.version.desc())
+        .first()
+    )
+    return row.version if row else None
+
+
+# ---------- 调整 ----------
+
+
+def adjust_plan_item(
+    db: Session,
+    item_id: int,
+    start_time: str,
+    end_time: str,
+    title: str | None = None,
+) -> dict:
+    """调整单个计划项的时间（可选改标题），返回更新后的计划项字典。
+
+    校验：时间格式、end > start、与同日其他计划项不重叠、起始分钟唯一
+    （UNIQUE(date, start_time)）。冲突抛 ValueError（中文报错）。
+    """
+    item = db.get(PlanItem, item_id)
+    if item is None:
+        raise ValueError(f"计划项不存在（id={item_id}）")
+
+    new_start = parse_hhmm(start_time)
+    new_end = parse_hhmm(end_time)
+    if new_end <= new_start:
+        raise ValueError(f"结束时间必须晚于开始时间：{start_time} → {end_time}")
+
+    others = (
+        db.query(PlanItem)
+        .filter(PlanItem.date == item.date, PlanItem.id != item.id)
+        .all()
+    )
+    for other in others:
+        o_start, o_end = parse_hhmm(other.start_time), parse_hhmm(other.end_time)
+        overlap = new_start < o_end and new_end > o_start
+        same_start = new_start == o_start
+        if overlap or same_start:
+            raise ValueError(
+                f"时间冲突：与「{other.title}」({other.start_time}-{other.end_time}) "
+                f"重叠或起始时间相同"
+            )
+
+    item.start_time = new_start.strftime("%H:%M")
+    item.end_time = new_end.strftime("%H:%M")
+    item.status = "adjusted"
+    if title:
+        item.title = title
+    db.commit()
+    db.refresh(item)
+    return _item_to_dict(item)
+
+
+# ---------- 完成 + 校准 ----------
+
+
+def mark_done(db: Session, item_id: int, actual_minutes: int | None = None) -> dict:
+    """标记计划项完成：status → done，联动复习计划状态，记录「预估 vs 实际」校准。
+
+    - review 项：同时把关联的 review_schedules 置 done（completed_at 记当前时间）
+    - task / review 项且提供 actual_minutes：写入 calibration_stats 分桶统计
+    - 重复调用幂等（已 done 直接返回）
+    """
+    item = db.get(PlanItem, item_id)
+    if item is None:
+        raise ValueError(f"计划项不存在（id={item_id}）")
+
+    if item.status == "done":
+        return _item_to_dict(item)
+
+    item.status = "done"
+
+    linked_review: ReviewSchedule | None = None
+    if item.item_type == "review" and item.ref_id:
+        linked_review = db.get(ReviewSchedule, item.ref_id)
+        if linked_review is not None and linked_review.status != "done":
+            linked_review.status = "done"
+            linked_review.completed_at = datetime.now(_SHANGHAI).isoformat(timespec="seconds")
+
+    calibration_recorded = False
+    if actual_minutes is not None:
+        if item.item_type not in ("task", "review"):
+            raise ValueError(f"仅 task/review 项参与耗时校准，收到: {item.item_type!r}")
+        estimated = _duration_minutes(item)
+        _record_calibration(db, item, estimated, actual_minutes)
+        calibration_recorded = True
+
+    db.commit()
+    result = _item_to_dict(item)
+    result["calibration_recorded"] = calibration_recorded
+    if linked_review is not None:
+        result["linked_review_status"] = linked_review.status
+    return result
+
+
+def _duration_minutes(item: PlanItem) -> int:
+    return (
+        parse_hhmm(item.end_time).hour * 60
+        + parse_hhmm(item.end_time).minute
+        - (parse_hhmm(item.start_time).hour * 60 + parse_hhmm(item.start_time).minute)
+    )
+
+
+def _record_calibration(
+    db: Session, item: PlanItem, estimated_minutes: int, actual_minutes: int
+) -> None:
+    """按 课程 × 时段 × 难度 × 类型 分桶 upsert calibration_stats。
+
+    factor 始终由 sample_count / ratio_sum 重算（不信任外部传入）。
+    """
+    if estimated_minutes <= 0:
+        raise ValueError(f"预估耗时必须为正：{estimated_minutes}")
+    if actual_minutes < 0:
+        raise ValueError(f"实际耗时必须 >= 0：{actual_minutes}")
+
+    course_id: int | None = None
+    difficulty: int | None = None
+    if item.item_type == "review" and item.ref_id:
+        rs = db.get(ReviewSchedule, item.ref_id)
+        if rs is not None:
+            kp = db.get(KnowledgePoint, rs.knowledge_point_id)
+            course_id = kp.course_id if kp else None
+            difficulty = kp.difficulty if kp else None
+    elif item.item_type == "task" and item.ref_id:
+        task = db.get(Task, item.ref_id)
+        if task is not None:
+            course_id = task.course_id
+
+    time_bucket = time_bucket_for(item.start_time)
+    if time_bucket not in TIME_BUCKETS:  # 理论不可达，防御性校验
+        raise ValueError(f"未知时段分桶: {time_bucket!r}")
+
+    stat = (
+        db.query(CalibrationStat)
+        .filter(
+            CalibrationStat.course_id == course_id,
+            CalibrationStat.time_bucket == time_bucket,
+            CalibrationStat.difficulty == difficulty,
+            CalibrationStat.item_type == item.item_type,
+        )
+        .first()
+    )
+    if stat is None:
+        stat = CalibrationStat(
+            course_id=course_id,
+            time_bucket=time_bucket,
+            difficulty=difficulty,
+            item_type=item.item_type,
+            sample_count=0,
+            ratio_sum=0.0,
+        )
+        db.add(stat)
+    stat.sample_count += 1
+    stat.ratio_sum = round(stat.ratio_sum + actual_minutes / estimated_minutes, 6)
+    stat.factor = round(stat.ratio_sum / stat.sample_count, 6)
+
+
+# ---------- 查询 ----------
+
+
+def list_courses(db: Session) -> list[dict]:
+    """课程列表（含档位）。"""
+    rows = db.query(Course).order_by(Course.id).all()
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "code": c.code,
+            "tier": c.tier,
+            "color": c.color,
+            "teacher": c.teacher,
+            "notes": c.notes,
+        }
+        for c in rows
+    ]
+
+
+def list_tasks(db: Session, status: str | None = None) -> list[dict]:
+    """任务列表（可按状态过滤：todo/doing/done/cancelled）。"""
+    query = db.query(Task)
+    if status:
+        if status not in ("todo", "doing", "done", "cancelled"):
+            raise ValueError(f"未知任务状态: {status!r}（应为 todo/doing/done/cancelled）")
+        query = query.filter(Task.status == status)
+    rows = query.order_by(Task.id).all()
+    return [
+        {
+            "id": t.id,
+            "title": t.title,
+            "description": t.description,
+            "deadline": t.deadline,
+            "estimated_minutes": t.estimated_minutes,
+            "course_id": t.course_id,
+            "course_name": t.course.name if t.course else None,
+            "status": t.status,
+            "source": t.source,
+        }
+        for t in rows
+    ]
+
+
+def list_reviews(db: Session, due_date: str | None = None) -> list[dict]:
+    """复习计划列表（可按到期日过滤，'YYYY-MM-DD'）。"""
+    query = db.query(ReviewSchedule)
+    if due_date:
+        parse_date(due_date)  # 校验格式
+        query = query.filter(ReviewSchedule.due_date == due_date)
+    rows = query.order_by(ReviewSchedule.due_date, ReviewSchedule.id).all()
+    result: list[dict] = []
+    for rs in rows:
+        kp = db.get(KnowledgePoint, rs.knowledge_point_id)
+        course = db.get(Course, kp.course_id) if kp else None
+        result.append(
+            {
+                "id": rs.id,
+                "seq": rs.seq,
+                "due_date": rs.due_date,
+                "status": rs.status,
+                "knowledge_point_id": rs.knowledge_point_id,
+                "knowledge_point": kp.title if kp else None,
+                "difficulty": kp.difficulty if kp else None,
+                "course_id": course.id if course else None,
+                "course_name": course.name if course else None,
+                "completed_at": rs.completed_at,
+            }
+        )
+    return result

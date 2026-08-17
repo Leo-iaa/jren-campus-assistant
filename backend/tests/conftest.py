@@ -1,6 +1,14 @@
-"""pytest 公共夹具：每个测试独立的临时 SQLite 数据库 + 依赖注入的测试客户端。"""
+"""pytest 公共夹具：每个测试独立的临时 SQLite 数据库 + 依赖注入的测试客户端。
+
+注意：必须在本文件顶部（导入 backend 之前）关闭 APScheduler 定时任务，
+因为 ``backend.config.settings`` 是导入期单例，晚设置无效。
+"""
+import os
 import sys
 from pathlib import Path
+
+# 测试环境：不启动 21:00 定时任务（避免后台线程干扰）
+os.environ.setdefault("JREN_MCP_SCHEDULER_ENABLED", "false")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,8 +49,8 @@ def db_session(tmp_path):
 
 @pytest.fixture()
 def client(db_session):
-    """FastAPI 测试客户端：get_db 依赖指向临时数据库。"""
-    app = create_app()
+    """FastAPI 测试客户端：get_db 依赖与 MCP 工具会话均指向临时数据库。"""
+    app = create_app(db_factory=lambda: db_session())
 
     def override_get_db():
         with db_session() as session:
