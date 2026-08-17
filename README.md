@@ -2,7 +2,7 @@
 
 > 基于大模型的智能校园日程规划与复习安排助手 —— 计划型（J人）学生的「第二大脑」。
 
-![Status](https://img.shields.io/badge/status-设计阶段-yellow)
+![Status](https://img.shields.io/badge/status-开发中-blue)
 ![Platform](https://img.shields.io/badge/platform-Web%20%2F%20PWA-blue)
 ![Backend](https://img.shields.io/badge/backend-FastAPI-green)
 ![AI](https://img.shields.io/badge/AI-LLM%20%2B%20MCP-orange)
@@ -85,8 +85,8 @@
 
 | 阶段 | 内容 | 周期 |
 |------|------|------|
-| **Phase 0 · 设计（当前）** | 需求梳理、架构设计、仓库初始化 | 进行中 |
-| **Phase 1 · MVP** | 课表 + Notion + Obsidian 全链路：采集 → 提取 → 遗忘曲线规划 → 时间表 → 用户确认 → 写日历 | 2-4 周 |
+| **Phase 0 · 设计** | 需求梳理、架构设计、仓库初始化 | ✅ 已完成 |
+| **Phase 1 · MVP（当前）** | 后端核心已就绪（11 表模型 / CRUD API / 测试）；待实现遗忘曲线调度与时间表规划算法、MCP 接入、前端 | 进行中 |
 | **Phase 2 · V2** | 习惯自适应校准、PWA 移动端优化、主动提醒 | 4-6 周 |
 | **Phase 3 · V3** | 更多数据源、多用户云端部署、手机推送 | 待定 |
 
@@ -94,27 +94,48 @@
 
 ```text
 jren-campus-assistant/
-├── frontend/          # React + PWA 前端
+├── frontend/          # React + PWA 前端（待开发）
 ├── backend/           # FastAPI 后端
-│   ├── mcp_client/    # MCP 数据接入层
-│   ├── extractor/     # 知识点提取
-│   ├── scheduler/     # 遗忘曲线 + 时间表规划
-│   ├── calibrator/    # 习惯自适应
-│   └── models/        # 数据模型
+│   ├── api/           # 路由层：健康检查 + 7 组基础 CRUD
+│   ├── models/        # SQLAlchemy 数据模型（11 张表）
+│   ├── schemas/       # Pydantic 请求/响应模型（校验与枚举）
+│   ├── scheduler/     # 遗忘曲线 + 时间表规划（接口占位，算法待实现）
+│   ├── scripts/       # 工具脚本（init_db.py 数据库初始化）
+│   ├── tests/         # pytest 测试（63 例）
+│   └── data/          # SQLite 数据库文件（运行时生成，不入库）
 ├── docs/              # 设计文档
 ├── IDEA.md            # 想法与需求来源
 └── README.md
 ```
 
-## 🚀 快速开始
+## 🚀 快速开始（后端）
 
-> ⚠️ 当前处于**设计阶段**，代码尚未开始编写，仓库已初始化完毕。
+> 环境要求：Python 3.11+。前端（React + PWA）将在后续阶段接入。
 
 ```bash
 git clone https://github.com/Leo-iaa/jren-campus-assistant.git
-cd jren-campus-assistant
-# 安装与运行步骤将在 MVP 阶段补充
+cd jren-campus-assistant/backend
+
+# 1. 创建虚拟环境并安装依赖
+python -m venv .venv
+# Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+
+# 2. 初始化数据库（生成 backend/data/jren.db，幂等可重复执行）
+# 回到仓库根目录执行：
+cd ..
+python -m backend.scripts.init_db
+
+# 3. 启动后端服务
+uvicorn backend.main:app --reload
+# 打开 http://127.0.0.1:8000/docs 查看接口文档（Swagger UI）
+
+# 4. 运行测试
+cd backend
+python -m pytest
 ```
+
+健康检查：`curl http://127.0.0.1:8000/health` → `{"status":"ok","database":"connected"}`
 
 ## 🛠️ 开发流程约定
 
