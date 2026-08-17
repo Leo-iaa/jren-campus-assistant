@@ -12,6 +12,7 @@
 - 开发流程约定（分支 / 提交信息 / PR 规范）
 - 产品设计定稿：课程档位制（S/A/B/C）复习策略、界面方案、流程时间轴（#3）
 - 数据库设计文档 `docs/database.md`（11 表结构 + DDL + 设计决策，#5）
+- 载体方案切换：Notion Calendar（日程）+ QClaw（AI 交互），README / vision / architecture 同步更新（#16）
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`
