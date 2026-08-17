@@ -23,6 +23,7 @@ class ReviewDraft:
     seq: int  # 第几次复习（1,2,3...）
     due_date: date  # 计划复习日期
     note: str = ""  # 生成说明（如「难度≥4 提前至课后 2 小时」）
+    ref_id: int | None = None  # 关联知识点 id（批量生成时填充，供落库映射）
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class PlanItemDraft:
     item_type: str  # course / task / review / misc
     ref_id: int | None
     title: str
+    release_slot: bool = False  # 课程块是否释放（B/C 档：该时段可安排其他任务）
 
 
 # ---------- 接口签名（占位） ----------
