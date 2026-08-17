@@ -42,9 +42,17 @@
   - 对接说明：课程/时间块/知识点/复习计划/任务/杂项/数据源真实对接 `/api/*`；后端暂无 plan/settings 路由，计划确认/调整与偏好配置先落 localStorage（`src/lib/storage.ts`），API 层预留切换点
   - Vitest 组件与纯函数测试 34 例全部通过（时间轴聚合 / 拖拽顺序 / 本地状态 / 日期工具 / 三组件）；`npm run build` 通过；与后端本地联调跑通（Edge headless 截图验证三页面）
   - `frontend/README.md` 启动说明 + `scripts/seed_demo.py` 演示数据脚本
+- 后端 MCP Server 暴露层（#20）：
+  - `backend/mcp_server/` 包：用官方 MCP SDK（mcp>=2.0.0）把后端包装为 Streamable HTTP MCP Server，挂载 `/mcp` 路径（QClaw 连接地址 `http://<局域网IP>:8000/mcp`，无 307 重定向，局域网 Host 直连）
+  - 8 个工具：generate_tomorrow_plan / get_today_plan_preview / confirm_plan / adjust_plan_item / get_courses / get_tasks / get_reviews / mark_done，复用 `backend/scheduler/` 规划器与校准算法；工具出错返回中文 `{"error": ...}`
+  - 计划编排服务：生成（草案，已确认的计划不自动重排、done 项防冲突）、预览（微信友好文本）、确认（版本快照 plan_versions）、调整（时间冲突校验）、完成（联动 review_schedules + calibration_stats 分桶校准）
+  - APScheduler 每天 21:00 自动生成次日计划（后端兜底，QClaw 未触发也能跑；misfire 1 小时补跑；`JREN_MCP_SCHEDULER_ENABLED` / `JREN_MCP_PLAN_GENERATE_TIME` 可配置）
+  - Notion Calendar 写入 service：confirm 时把 plan_items 幂等写入 Notion 日程数据库（按「日期+标题」匹配新建/更新/跳过），事件带 08:00 提醒（方案 A 双保险），属性名可配置，token 过期自动刷新
+  - 使用说明 `docs/mcp-server.md`（QClaw 连接步骤 + 定时任务配置 + 微信通道实测记录表）；pytest 测试 39 例全部通过（全量 212 例，无回归）
 
 [#1]: https://github.com/Leo-iaa/jren-campus-assistant/issues/1
 [#7]: https://github.com/Leo-iaa/jren-campus-assistant/issues/7
 [#9]: https://github.com/Leo-iaa/jren-campus-assistant/issues/9
 [#11]: https://github.com/Leo-iaa/jren-campus-assistant/issues/11
 [#13]: https://github.com/Leo-iaa/jren-campus-assistant/issues/13
+[#20]: https://github.com/Leo-iaa/jren-campus-assistant/issues/20

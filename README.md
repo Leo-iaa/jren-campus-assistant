@@ -40,7 +40,7 @@
 │  └─ AI 交互：QClaw + 微信（对话确认/调整/查询）    │
 ├─────────────────────────────────────────────────┤
 │  后端：Python FastAPI                            │
-│  ├─ MCP Server 暴露层（对接 QClaw，🆕 开发中）    │
+│  ├─ MCP Server 暴露层（对接 QClaw，8 个工具）     │
 │  ├─ MCP 客户端层（Notion/Obsidian/iCal）         │
 │  ├─ 知识提取层（LLM 抽取知识点与难度）            │
 │  ├─ 遗忘曲线调度器（复习间隔算法）                │
@@ -90,8 +90,8 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | **Phase 0 · 设计** | 需求、架构、数据库设计 | ✅ 已完成 |
-| **Phase 1 · 核心** | 后端 11 表模型 / CRUD API / 调度算法 / MCP 接入 / 173 例测试；前端三页面（备用） | ✅ 已完成 |
-| **Phase 1.5 · 载体集成（当前）** | MCP Server 暴露层 / QClaw 对接 / Notion Calendar 写入 / 定时任务 | 🔨 进行中 |
+| **Phase 1 · 核心** | 后端 11 表模型 / CRUD API / 调度算法 / MCP 接入 / 212 例测试；前端三页面（备用） | ✅ 已完成 |
+| **Phase 1.5 · 载体集成** | MCP Server 暴露层 / QClaw 对接 / Notion Calendar 写入 / 21:00 定时任务 | ✅ 已完成 |
 | **Phase 2 · 自适应** | 校准数据回流、提醒完善、云端部署准备 | ⏳ 待启动 |
 | **Phase 3 · 扩展** | 多用户、手机推送、更多数据源 | ⏳ 待定 |
 
@@ -106,8 +106,9 @@ jren-campus-assistant/
 │   ├── schemas/       # Pydantic 请求/响应模型（校验与枚举）
 │   ├── scheduler/     # 遗忘曲线 + 时间表规划 + 习惯校准（已实现）
 │   ├── mcp_client/    # MCP 数据接入层（Notion / Obsidian / iCal adapter）
+│   ├── mcp_server/    # MCP Server 暴露层（QClaw 接入：8 工具 + 定时任务 + Notion 日历写入）
 │   ├── scripts/       # 工具脚本（init_db.py 数据库初始化）
-│   ├── tests/         # pytest 测试（173 例）
+│   ├── tests/         # pytest 测试（212 例）
 │   └── data/          # SQLite 数据库文件（运行时生成，不入库）
 ├── docs/              # 设计文档
 └── README.md
@@ -144,14 +145,17 @@ python -m pytest
 
 健康检查：`curl http://127.0.0.1:8000/health` → `{"status":"ok","database":"connected"}`
 
-### QClaw 集成（规划中）
+### QClaw 集成
 
-> ⚠️ 后端 MCP Server 暴露层尚未实现，以下为规划步骤，实现后补充具体配置。
+> ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，8 个工具），
+> 完整配置见 [docs/mcp-server.md](docs/mcp-server.md)。
 
-1. 后端启动 MCP Server（Streamable HTTP 模式）
-2. QClaw 中添加 MCP Server：地址 `http://<电脑局域网IP>:8000/mcp`
-3. QClaw 配置定时任务：每天 21:00 →「生成明天的计划」；每天 08:00 →「推送今日计划预览到微信」
-4. 手机微信远程操控 QClaw，对话式确认 / 调整计划（微信通道双向能力以实测为准）
+1. 启动后端：`uvicorn backend.main:app --host 0.0.0.0 --port 8000`
+2. QClaw 中添加 MCP Server：类型 Streamable HTTP，地址 `http://<电脑局域网IP>:8000/mcp`
+3. QClaw 配置定时任务：每天 21:00 → `generate_tomorrow_plan`；每天 08:00 → `get_today_plan_preview` 推微信
+4. 后端 APScheduler 21:00 自动生成次日计划（QClaw 未触发也能跑，兜底）
+5. 确认计划自动写入 Notion Calendar（事件带 08:00 提醒，双保险）
+6. 手机微信远程操控 QClaw，对话式确认 / 调整计划（微信通道双向能力以实测为准）
 
 ### 前端（可选）
 
@@ -186,3 +190,4 @@ npm run test       # 组件与纯函数测试
 - [产品愿景与需求](docs/vision.md)
 - [数据库设计](docs/database.md)
 - [MCP 数据接入层使用说明](docs/mcp-client.md)
+- [MCP Server 暴露层使用说明（QClaw 接入）](docs/mcp-server.md)
