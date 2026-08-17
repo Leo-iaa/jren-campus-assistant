@@ -37,6 +37,14 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
+    # MCP Server 暴露层（QClaw 接入）
+    # 每天定时生成次日计划（后端兜底；测试/开发可置 false 关闭）
+    mcp_scheduler_enabled: bool = True
+    # 计划生成时间（HH:MM，Asia/Shanghai）
+    mcp_plan_generate_time: str = "21:00"
+    # Notion 日程数据库 ID（或写入数据源 config.calendar_database_id）
+    mcp_notion_calendar_db: str | None = None
+
 
 # 全局单例，供各模块直接导入使用
 settings = Settings()
