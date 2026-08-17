@@ -1,0 +1,6 @@
+# pytest 配置（仅测试相关；运行依赖见 requirements.txt）
+# pythonpath 相对 rootdir（backend/）解析：.. 即仓库根目录，使 `import backend` 可用
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".."]
+addopts = "-q"
