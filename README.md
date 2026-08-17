@@ -116,7 +116,20 @@ cd jren-campus-assistant
 # 安装与运行步骤将在 MVP 阶段补充
 ```
 
+## 🛠️ 开发流程约定
+
+本仓库模拟真实工程协作流程，遵循以下约定：
+
+| 环节 | 约定 |
+|------|------|
+| 分支模型 | `main` 为稳定主干；新工作从 `main` 切出 `feat/`、`fix/`、`docs/`、`chore/` 分支 |
+| 提交信息 | [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)：`<type>(<scope>): <描述>` |
+| 变更合并 | 通过 Pull Request 合并，PR 描述中关联 Issue（`Closes #xx`） |
+| 版本管理 | [语义化版本](https://semver.org/lang/zh-CN/) + Changelog 记录 |
+
+> 💡 禁止直接向 `main` 推送提交 —— 即使是一个人开发，也要养成「分支 → PR → 合并」的习惯。
+
 ## 📄 文档
 
 - [架构设计文档](docs/architecture.md)
-- [想法与需求来源](IDEA.md)
+- [产品愿景与需求](docs/vision.md)
