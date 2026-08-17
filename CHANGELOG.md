@@ -32,8 +32,17 @@
   - Obsidian adapter：obsidian-mcp-server（stdio）读 vault + 全文搜索；`vault_path` 直读兜底（不依赖 MCP 服务器）；只做查询接口，不落库
   - data_sources API 增强：`POST /{id}/sync`（同步 + 更新 last_sync_at）、`POST /{id}/enable|disable`、`POST /notion/oauth/start|callback`
   - 使用说明 `docs/mcp-client.md`；pytest 测试 50 例全部通过（全量 173 例，无回归）
+- 前端三页面（#13）：
+  - React + Vite + TypeScript + PWA（vite-plugin-pwa，可添加到安卓主屏幕；中文界面、简洁卡片风、移动优先）
+  - 今日计划页：AI 计划确认横幅（✅ 确认 / 撤销）+ 时间轴（课程 / 作业 / 复习 / 自由时间，复习点标注 🔁 与第几次，HTML5 拖拽调整），计划 = 前端聚合（简易确定性规划：固定课程 → 空闲块填空 → 任务优先于复习）
+  - 周视图：7 天网格（课程 + 任务 + 复习点），今天高亮；窄屏自动降级为列表
+  - 设置页：数据源绑定（Notion OAuth 回调 / Obsidian / iCal，含同步/启停/解绑）、课程档位管理（S/A/B/C + 复习序列展示）、偏好设置（每日复习上限、学习时段）、LLM 配置（豆包 / DeepSeek）
+  - 对接说明：课程/时间块/知识点/复习计划/任务/杂项/数据源真实对接 `/api/*`；后端暂无 plan/settings 路由，计划确认/调整与偏好配置先落 localStorage（`src/lib/storage.ts`），API 层预留切换点
+  - Vitest 组件与纯函数测试 34 例全部通过（时间轴聚合 / 拖拽顺序 / 本地状态 / 日期工具 / 三组件）；`npm run build` 通过；与后端本地联调跑通（Edge headless 截图验证三页面）
+  - `frontend/README.md` 启动说明 + `scripts/seed_demo.py` 演示数据脚本
 
 [#1]: https://github.com/Leo-iaa/jren-campus-assistant/issues/1
 [#7]: https://github.com/Leo-iaa/jren-campus-assistant/issues/7
 [#9]: https://github.com/Leo-iaa/jren-campus-assistant/issues/9
 [#11]: https://github.com/Leo-iaa/jren-campus-assistant/issues/11
+[#13]: https://github.com/Leo-iaa/jren-campus-assistant/issues/13
