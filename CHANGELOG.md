@@ -19,6 +19,13 @@
   - `backend/scheduler/` 模块占位与接口签名（遗忘曲线调度 / 时间表规划 / 习惯校准，算法待实现）
   - SQLite 初始化脚本 `scripts/init_db.py`（幂等建表 + 默认设置）
   - pytest 测试 63 例全部通过（模型约束与级联 + CRUD 接口）
+- 算法模块（#9）：
+  - 遗忘曲线调度器 `backend/scheduler/review.py`：S/A/B/C 档位复习序列、难度微调（≥4 首次提前至课后 2 小时 / ≤2 跳过当晚 / S 档难度≥4 额外一次）、每日复习上限顺延次日、跳过/逾期状态流转
+  - 时间表规划器 `backend/scheduler/planner.py`：确定性贪心约束求解，B/C 档释放时段（`release_slot`）可安排其他任务、学习时段偏好、保证 `UNIQUE(date, start_time)`、放不下的项目进入 dropped 报告
+  - 自适应校准模块 `backend/scheduler/calibration.py`：按 课程 × 时段 × 难度 分桶统计「预估 vs 实际」，输出修正系数 factor；snapshot/load 可对接 `calibration_stats` 表
+  - 调度器接口契约扩展（`ReviewDraft.ref_id` / `PlanItemDraft.release_slot`，向后兼容）
+  - pytest 单元测试 60 例全部通过（全量 123 例，无回归）
 
 [#1]: https://github.com/Leo-iaa/jren-campus-assistant/issues/1
 [#7]: https://github.com/Leo-iaa/jren-campus-assistant/issues/7
+[#9]: https://github.com/Leo-iaa/jren-campus-assistant/issues/9
