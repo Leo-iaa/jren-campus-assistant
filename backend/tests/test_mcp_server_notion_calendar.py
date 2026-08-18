@@ -1,19 +1,18 @@
 """MCP Server 暴露层 · Notion Calendar 写入器测试（backend/mcp_server/notion_calendar.py）。
 
-传输层注入 FakeJsonRpcTransport（tests/fakes.py），不需要真实 Notion 账号。
+客户端注入 FakeNotionRest（tests/fakes.py），不需要真实 Notion 账号。
 """
 from datetime import date
 
 import pytest
 
-from backend.mcp_client.transport import McpClient
 from backend.mcp_server.notion_calendar import (
     NotionCalendarError,
     NotionCalendarWriter,
     build_writer,
 )
 from backend.models import DataSource, PlanItem
-from tests.fakes import FakeJsonRpcTransport
+from tests.fakes import FakeNotionRest
 
 PLAN_DATE = date(2026, 8, 19)
 DB_ID = "cal-db-123"
@@ -51,26 +50,17 @@ def make_page(title: str, start: str, item_type: str = "task") -> dict:
     }
 
 
-def writer_with(fake: FakeJsonRpcTransport) -> NotionCalendarWriter:
-    return NotionCalendarWriter(client=McpClient(fake), config=CALENDAR_CONFIG)
+def writer_with(fake: FakeNotionRest) -> NotionCalendarWriter:
+    return NotionCalendarWriter(client=fake, config=CALENDAR_CONFIG)
 
 
-def fake_transport(existing_pages: list[dict] | None = None) -> FakeJsonRpcTransport:
-    """构造含全部工具响应的假传输（默认无已存在事件）。"""
-    return FakeJsonRpcTransport(
-        call_results={
-            "query_database": {"structuredContent": {"results": existing_pages or []}},
-            "create_page": {"structuredContent": {"id": "new-page"}},
-            "update_page": {"structuredContent": {"id": "updated-page"}},
-        }
-    )
+def fake_rest(existing_pages: list[dict] | None = None) -> FakeNotionRest:
+    """构造假 Notion REST 客户端（默认无已存在事件）。"""
+    return FakeNotionRest(query_results=existing_pages or [])
 
 
-def tool_calls(fake: FakeJsonRpcTransport, name: str) -> list[dict]:
-    return [
-        params for method, params in fake.calls
-        if method == "tools/call" and params["name"] == name
-    ]
+def rest_calls(fake: FakeNotionRest, method: str) -> list[dict]:
+    return [kwargs for m, kwargs in fake.calls if m == method]
 
 
 # ---------- 幂等写入 ----------
@@ -79,16 +69,16 @@ def tool_calls(fake: FakeJsonRpcTransport, name: str) -> list[dict]:
 def test_sync_creates_missing_events_with_reminder(db_session):
     with db_session() as db:
         add_plan_item(db, "高数作业", "10:00", "11:00", "task")
-        fake = fake_transport()
+        fake = fake_rest()
         result = writer_with(fake).sync_plan_to_calendar(db, PLAN_DATE)
 
         assert result.created == 1 and result.updated == 0 and result.unchanged == 0
 
-        creates = tool_calls(fake, "create_page")
+        creates = rest_calls(fake, "create_page")
         assert len(creates) == 1
-        args = creates[0]["arguments"]
-        assert args["parent"] == {"database_id": DB_ID}
-        props = args["properties"]
+        kwargs = creates[0]
+        assert kwargs["parent_database_id"] == DB_ID
+        props = kwargs["properties"]
         # 标题 / 日期（+08:00 偏移，避免 Notion 按 UTC 解析偏差）/ 08:00 提醒 / 类型
         assert props["名称"]["title"][0]["text"]["content"] == "高数作业"
         assert props["日期"]["date"]["start"] == "2026-08-19T10:00:00+08:00"
@@ -100,34 +90,34 @@ def test_sync_creates_missing_events_with_reminder(db_session):
 def test_sync_unchanged_when_event_matches(db_session):
     with db_session() as db:
         add_plan_item(db, "高数作业", "10:00", "11:00", "task")
-        fake = fake_transport(
+        fake = fake_rest(
             existing_pages=[make_page("高数作业", "2026-08-19T10:00:00+08:00", "task")]
         )
         result = writer_with(fake).sync_plan_to_calendar(db, PLAN_DATE)
 
         assert result.created == 0 and result.updated == 0 and result.unchanged == 1
-        assert tool_calls(fake, "create_page") == []
-        assert tool_calls(fake, "update_page") == []
+        assert rest_calls(fake, "create_page") == []
+        assert rest_calls(fake, "update_page") == []
 
 
 def test_sync_updates_when_time_changed(db_session):
     with db_session() as db:
         add_plan_item(db, "高数作业", "19:00", "20:00", "task")
-        fake = fake_transport(
+        fake = fake_rest(
             existing_pages=[make_page("高数作业", "2026-08-19T10:00:00+08:00", "task")]
         )
         result = writer_with(fake).sync_plan_to_calendar(db, PLAN_DATE)
 
         assert result.updated == 1 and result.created == 0 and result.unchanged == 0
-        updates = tool_calls(fake, "update_page")
+        updates = rest_calls(fake, "update_page")
         assert len(updates) == 1
-        assert updates[0]["arguments"]["page_id"] == "page-高数作业"
-        assert updates[0]["arguments"]["properties"]["日期"]["date"]["start"] == "2026-08-19T19:00:00+08:00"
+        assert updates[0]["page_id"] == "page-高数作业"
+        assert updates[0]["properties"]["日期"]["date"]["start"] == "2026-08-19T19:00:00+08:00"
 
 
 def test_sync_skips_when_no_plan_items(db_session):
     with db_session() as db:
-        fake = FakeJsonRpcTransport()
+        fake = FakeNotionRest()
         result = writer_with(fake).sync_plan_to_calendar(db, PLAN_DATE)
         assert result.created == 0 and result.updated == 0 and result.unchanged == 0
         assert fake.calls == []  # 无计划项时不发起任何查询
@@ -136,26 +126,26 @@ def test_sync_skips_when_no_plan_items(db_session):
 def test_sync_uses_configured_property_names(db_session):
     with db_session() as db:
         add_plan_item(db, "高数作业", "10:00", "11:00", "task")
-        fake = fake_transport()
+        fake = fake_rest()
         writer = NotionCalendarWriter(
-            client=McpClient(fake),
+            client=fake,
             config={
                 "calendar_database_id": DB_ID,
                 "props": {"title": "Title", "date": "Date", "type": "Kind"},
             },
         )
         writer.sync_plan_to_calendar(db, PLAN_DATE)
-        creates = tool_calls(fake, "create_page")
-        assert "Title" in creates[0]["arguments"]["properties"]
-        assert "Date" in creates[0]["arguments"]["properties"]
-        assert "Kind" in creates[0]["arguments"]["properties"]
+        creates = rest_calls(fake, "create_page")
+        assert "Title" in creates[0]["properties"]
+        assert "Date" in creates[0]["properties"]
+        assert "Kind" in creates[0]["properties"]
 
 
 def test_sync_missing_database_id_raises(db_session):
     with db_session() as db:
         add_plan_item(db, "高数作业")
-        fake = FakeJsonRpcTransport()
-        writer = NotionCalendarWriter(client=McpClient(fake), config={})
+        fake = FakeNotionRest()
+        writer = NotionCalendarWriter(client=fake, config={})
         with pytest.raises(NotionCalendarError, match="calendar_database_id"):
             writer.sync_plan_to_calendar(db, PLAN_DATE)
 

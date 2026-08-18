@@ -158,7 +158,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 ### 7.1 前置条件
 
-1. 已绑定 Notion 数据源并完成 OAuth 授权（见 [docs/mcp-client.md](mcp-client.md)）
+1. 已绑定 Notion 数据源并配置**集成令牌**（`config.tokens.access_token`，见 [docs/mcp-client.md](mcp-client.md) 3.1；REST 直连，无需 OAuth）
 2. 在 Notion 建一个**日程数据库**（Calendar database，模板选「日程」），
    记下数据库 ID（URL 中 `.../<32位ID>?v=...` 的那段）
 3. 告诉后端日历数据库 ID（二选一）：

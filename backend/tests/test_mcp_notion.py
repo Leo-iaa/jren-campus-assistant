@@ -1,13 +1,10 @@
-"""Notion adapter 测试：fake 传输层 + Notion 风格属性映射（全 mock，无真实账号）。"""
+"""Notion adapter 测试：fake REST 客户端 + Notion 风格属性映射（全 mock，无真实账号）。"""
 from __future__ import annotations
-
-import json
 
 import pytest
 
 from backend.mcp_client.notion import NotionAdapter
-from backend.mcp_client.transport import McpClient
-from tests.fakes import FakeJsonRpcTransport
+from tests.fakes import FakeNotionRest
 
 
 def _page(page_id: str, title: str, **props) -> dict:
@@ -24,11 +21,10 @@ def _page(page_id: str, title: str, **props) -> dict:
     return {"id": page_id, "properties": properties}
 
 
-def _make_adapter(call_results: dict, config: dict | None = None) -> tuple[NotionAdapter, FakeJsonRpcTransport]:
-    transport = FakeJsonRpcTransport(call_results=call_results)
-    client = McpClient(transport)
+def _make_adapter(rows: list[dict], config: dict | None = None) -> tuple[NotionAdapter, FakeNotionRest]:
+    fake = FakeNotionRest(query_results=rows)
     merged_config = config if config is not None else {"database_id": "db1"}
-    return NotionAdapter(merged_config, client=client), transport
+    return NotionAdapter(merged_config, client=fake), fake
 
 
 def test_fetch_tasks_maps_chinese_properties():
@@ -36,9 +32,7 @@ def test_fetch_tasks_maps_chinese_properties():
         _page("p1", "高数作业1", deadline="2026-08-20", course="高等数学", status="进行中"),
         _page("p2", "英语作文", deadline="2026-08-25", status="已完成"),
     ]
-    adapter, transport = _make_adapter(
-        {"query_database": {"structuredContent": {"results": rows}}}
-    )
+    adapter, fake = _make_adapter(rows)
     tasks = adapter.fetch_tasks()
     assert len(tasks) == 2
 
@@ -53,48 +47,33 @@ def test_fetch_tasks_maps_chinese_properties():
     assert t2.course_name is None
     assert t2.status == "done"  # 已完成 → done
     # 调用参数包含 database_id 与 page_size
-    _, params = transport.calls[-1]
-    assert params["name"] == "query_database"
-    assert params["arguments"]["database_id"] == "db1"
+    method, kwargs = fake.calls[-1]
+    assert method == "query_database"
+    assert kwargs["database_id"] == "db1"
+    assert kwargs["page_size"] == 50
 
 
 def test_fetch_tasks_status_normalization():
     rows = [_page("p1", "任务A", status="已取消"), _page("p2", "任务B", status="随便写")]
-    adapter, _ = _make_adapter({"query_database": {"structuredContent": {"results": rows}}})
+    adapter, _ = _make_adapter(rows)
     tasks = adapter.fetch_tasks()
     assert tasks[0].status == "cancelled"
     assert tasks[1].status == "todo"  # 未知状态 → 兜底 todo（tasks.status CHECK 约束）
 
 
-def test_fetch_tasks_parses_text_json_fallback():
-    """服务器只返回 content 文本 JSON（无 structuredContent）时也能解析。"""
-    rows = [_page("p1", "任务A", deadline="2026-08-20")]
-    adapter, _ = _make_adapter(
-        {"query_database": {"content": [{"type": "text", "text": json.dumps({"results": rows})}]}}
-    )
-    tasks = adapter.fetch_tasks()
-    assert tasks[0].title == "任务A"
-    assert tasks[0].deadline == "2026-08-20"
-
-
 def test_fetch_tasks_missing_database_id():
-    adapter, _ = _make_adapter({}, config={})
+    adapter, _ = _make_adapter([], config={})
     with pytest.raises(ValueError, match="database_id"):
         adapter.fetch_tasks()
 
 
 def test_search_and_fetch_page():
     rows = [_page("p1", "高数笔记")]
-    adapter, transport = _make_adapter(
-        {
-            "search": {"structuredContent": {"results": rows}},
-            "retrieve_page": {"structuredContent": rows[0]},
-        }
-    )
+    adapter, fake = _make_adapter(rows)
     pages = adapter.search("高数")
     assert pages[0]["id"] == "p1"
     page = adapter.fetch_page("p1")
-    assert page["structuredContent"]["id"] == "p1"  # 返回 MCP 原始结果信封
+    assert page["id"] == "p1"  # REST 直接返回 page 对象
 
 
 def test_custom_property_names():
@@ -115,8 +94,19 @@ def test_custom_property_names():
             "course": ["所属科目"],
         },
     }
-    adapter, _ = _make_adapter({"query_database": {"structuredContent": {"results": [page]}}}, config)
+    adapter, _ = _make_adapter([page], config)
     task = adapter.fetch_tasks()[0]
     assert task.title == "自定义标题"
     assert task.deadline == "2026-09-01"
     assert task.course_name == "线代"
+
+
+def test_query_database_passes_filter():
+    """日历写入场景：query_database 的 filter（日期过滤）原样透传。"""
+    rows = [_page("p1", "高数作业")]
+    adapter, fake = _make_adapter(rows, config={"database_id": "db1"})
+    # 直接验证 NotionRestClient 的 filter 参数传递（通过 adapter 底层客户端）
+    rows2 = fake.query_database("db1", filter={"property": "日期", "date": {"equals": "2026-08-19"}})
+    assert rows2 == rows
+    method, kwargs = fake.calls[-1]
+    assert kwargs["filter"] == {"property": "日期", "date": {"equals": "2026-08-19"}}

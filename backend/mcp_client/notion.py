@@ -1,22 +1,15 @@
-"""Notion MCP adapter：对接官方远程 MCP Server（mcp.notion.com/mcp）。
+"""Notion adapter：REST 直连 api.notion.com 查作业数据库 → 任务（tasks 表，source='notion'）。
 
-- 传输：MCP streamable HTTP（JSON-RPC over HTTPS，Bearer token）
-- 授权：OAuth 2.0 授权码 + PKCE（见 ``oauth.py``），token 存于 data_sources.config
-- 工具名可配置（官方 Notion MCP 工具：query_database / search / retrieve_page）
+- 传输：NotionRestClient（httpx，Bearer 集成令牌 + Notion-Version；见 notion_rest.py）
+- 背景：mcp.notion.com 不接受集成令牌（Issue #26），改 REST 直连
 - 作业任务属性映射可配置（Notion 数据库结构因人而异），默认支持中英文常见属性名
 
-不要求真实账号：传输层可注入 fake，测试全 mock（Issue #11）。
+不要求真实账号：http 客户端可注入 fake，测试全 mock（Issue #11）。
 """
 from __future__ import annotations
 
 from backend.mcp_client.models import TaskItem
-from backend.mcp_client.transport import HttpTransport, McpClient, extract_result_items
-
-DEFAULT_ENDPOINT = "https://mcp.notion.com/mcp"
-
-DEFAULT_TOOL_QUERY_DATABASE = "query_database"
-DEFAULT_TOOL_SEARCH = "search"
-DEFAULT_TOOL_GET_PAGE = "retrieve_page"
+from backend.mcp_client.notion_rest import NotionRestClient
 
 # 作业任务常用属性名（可经 config["props"] 覆盖）
 DEFAULT_TITLE_PROPS = ["标题", "名称", "任务", "任务名称", "Title", "title"]
@@ -76,13 +69,9 @@ class NotionAdapter:
         self,
         config: dict,
         access_token: str | None = None,
-        client: McpClient | None = None,
+        client: NotionRestClient | None = None,
     ) -> None:
         self.config = config
-        self.endpoint = config.get("endpoint", DEFAULT_ENDPOINT)
-        self.tool_query_database = config.get("tool_query_database", DEFAULT_TOOL_QUERY_DATABASE)
-        self.tool_search = config.get("tool_search", DEFAULT_TOOL_SEARCH)
-        self.tool_get_page = config.get("tool_get_page", DEFAULT_TOOL_GET_PAGE)
 
         props = config.get("props") or {}
         self.title_props = props.get("title", DEFAULT_TITLE_PROPS)
@@ -91,7 +80,7 @@ class NotionAdapter:
         self.status_props = props.get("status", DEFAULT_STATUS_PROPS)
         self.description_props = props.get("description", DEFAULT_DESC_PROPS)
 
-        self._client = client or McpClient(HttpTransport(self.endpoint, access_token=access_token))
+        self._client = client or NotionRestClient(access_token=access_token)
 
     # ---------- 作业任务 ----------
 
@@ -103,10 +92,8 @@ class NotionAdapter:
         db_id = database_id or self.config.get("database_id")
         if not db_id:
             raise ValueError("缺少 database_id：请在数据源 config 中配置 Notion 作业数据库 ID（config.database_id）")
-        result = self._client.call_tool(
-            self.tool_query_database, {"database_id": db_id, "page_size": max_pages}
-        )
-        return [self._to_task(row) for row in extract_result_items(result)]
+        rows = self._client.query_database(db_id, page_size=max_pages)
+        return [self._to_task(row) for row in rows]
 
     def _find_prop(self, props: dict, names: list[str]) -> dict | None:
         for name in names:
@@ -156,12 +143,11 @@ class NotionAdapter:
 
     def search(self, query: str, limit: int = 10) -> list[dict]:
         """全文搜索 Notion 页面（返回原始 page 对象列表）。"""
-        result = self._client.call_tool(self.tool_search, {"query": query, "page_size": limit})
-        return extract_result_items(result)
+        return self._client.search(query, page_size=limit)
 
     def fetch_page(self, page_id: str) -> dict:
         """读取页面（返回原始 page 对象）。"""
-        return self._client.call_tool(self.tool_get_page, {"page_id": page_id})
+        return self._client.retrieve_page(page_id)
 
     def close(self) -> None:
         self._client.close()
