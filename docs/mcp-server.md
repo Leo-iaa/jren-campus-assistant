@@ -40,6 +40,31 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 > ⚠️ 首次使用前记得 `python -m backend.scripts.init_db` 初始化数据库（幂等）。
 
+### 2.1 开机自启（Windows，方案 A 部署）
+
+后端与 QClaw 同机部署时，让服务在**开机登录后自动后台启动**，无需手动操作：
+
+1. 两个脚本（已入库 `backend/scripts/`）：
+   - `start_backend.bat`：启动逻辑——定位仓库根、启动 uvicorn、日志落盘 `backend/data/server.log`；
+     自带**端口占用检测**（8000 已被监听则跳过，防重复启动）
+   - `start_backend_hidden.vbs`：隐藏窗口启动器（WSH `Run` 窗口参数 0，桌面不弹黑窗口）
+2. 配置自启：把 `start_backend_hidden.vbs` **复制**到系统启动文件夹：
+   `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`
+   （资源管理器地址栏粘贴该路径回车即可）
+3. 原理：登录时 Windows 自动运行启动文件夹里的 vbs → 隐藏启动 bat → uvicorn 后台运行
+
+> 💡 为什么不用「任务计划程序」：非管理员终端下 `schtasks /create` 注册会被拒（拒绝访问）；
+> 单用户登录场景下启动文件夹等效且零权限依赖，对新手更直观。
+
+> ⚠️ 两个脚本必须保持 **ASCII 纯英文注释**：cmd.exe 与 WSH 按 ANSI 代码页解析脚本文件，
+> UTF-8 中文注释会被拆成乱码命令导致启动失败（实测踩坑）。
+
+**自查服务是否在跑（大白话）**：浏览器打开 `http://127.0.0.1:8000/health`，
+看到 `{"status":"ok",...}` 就是正常；打不开则双击 `start_backend.bat` 手动启动，
+或重启电脑让自启重新生效。
+
+> 注意：vbs 引用的是仓库的**绝对路径**；若仓库被移动，需同步更新 vbs 中的路径。
+
 ## 3. 工具清单（8 个）
 
 | 工具 | 参数 | 返回 | 说明 |
