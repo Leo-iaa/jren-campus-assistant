@@ -1,4 +1,4 @@
-# MCP Server 暴露层使用说明（QClaw 接入）
+# MCP Server 暴露层使用说明（WorkBuddy 接入）
 
 > 对应 Issue #20，实现于 `backend/mcp_server/`。本文档面向实际部署与联调，
 > 协议细节可参考 [docs/architecture.md](architecture.md) 2.1 载体层与
@@ -7,15 +7,15 @@
 ## 1. 这是什么
 
 后端把业务能力包装为 **MCP Server**（Streamable HTTP 传输，挂载在 `/mcp` 路径），
-让 QClaw（AI 载体）通过标准 MCP 协议调用：生成 / 预览 / 确认 / 调整每日计划、
+让 WorkBuddy（AI 载体）通过标准 MCP 协议调用：生成 / 预览 / 确认 / 调整每日计划、
 查询课程 / 任务 / 复习、标记完成并校准耗时预估。
 
 与 `backend/mcp_client/`（数据**接入**层：读 Notion / Obsidian / iCal）相对，
-本层是数据**暴露**层：QClaw → `/mcp` → 编排服务 → 数据库 + 调度算法。
+本层是数据**暴露**层：WorkBuddy → `/mcp` → 编排服务 → 数据库 + 调度算法。
 
 ```
-QClaw（MCP 客户端，微信远程）
-   │  Streamable HTTP：http://<局域网IP>:8000/mcp
+WorkBuddy（MCP 客户端，微信远程）
+   │  Streamable HTTP：http://127.0.0.1:8000/mcp（方案 A 同机）
    ▼
 backend/mcp_server/server.py    ← 8 个 MCP 工具（薄封装）
    ▼
@@ -32,7 +32,7 @@ backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/�
 uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-- `--host 0.0.0.0`：**必须**，否则 QClaw（手机 / 其他设备）连不上
+- `--host 0.0.0.0`：**必须**，否则 WorkBuddy（手机 / 其他设备）连不上
 - 启动日志会出现：`MCP 定时任务已启动：每天 21:00 生成次日计划`（APScheduler 兜底）
 - 验证：
   - `curl http://127.0.0.1:8000/health` → `{"status":"ok","database":"connected"}`
@@ -42,7 +42,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 ### 2.1 开机自启（Windows，方案 A 部署）
 
-后端与 QClaw 同机部署时，让服务在**开机登录后自动后台启动**，无需手动操作：
+后端与 WorkBuddy 同机部署时，让服务在**开机登录后自动后台启动**，无需手动操作：
 
 1. 两个脚本（已入库 `backend/scripts/`）：
    - `start_backend.bat`：启动逻辑——定位仓库根、启动 uvicorn、日志落盘 `backend/data/server.log`；
@@ -90,33 +90,44 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
   「该日计划已确认」，改动请用 `adjust_plan_item` 逐项调整
 - 放不下的项目进 `dropped`，缺时长的杂项 / 与已完成项冲突的草案进 `skipped`
 
-## 4. QClaw 连接步骤
+## 4. WorkBuddy 连接步骤
 
-1. **确认后端已启动**（见第 2 节），并确保运行后端的电脑与手机在同一局域网
-2. **查电脑局域网 IP**：
-   - Windows：`ipconfig` 找「无线局域网适配器 WLAN」的 IPv4 地址（如 `192.168.1.5`）
-   - 手机与电脑连同一个 Wi-Fi 即可
-3. **防火墙放行 8000 端口**（Windows）：
-   - 首次启动 uvicorn 时弹窗选「允许访问」；若没弹窗：
-     设置 → 防火墙和网络保护 → 允许应用通过防火墙 → 添加 uvicorn/python 或放行 TCP 8000
-4. **QClaw 中添加 MCP Server**：
-   - 类型：Streamable HTTP
-   - 地址：`http://<局域网IP>:8000/mcp`（例如 `http://192.168.1.5:8000/mcp`）
+> 方案 A 部署：WorkBuddy 与后端**装在同一台 Windows 电脑**，直接连本机地址，无需查局域网 IP。
+
+1. **确认后端已启动**（见第 2 节）
+2. **打开 WorkBuddy → 设置 → MCP 服务**（或「MCP 管理」），添加服务器：
    - 名称随意（如 `jren-campus-assistant`）
-5. **验证**：连接成功后让 QClaw 列出工具，应能看到上表 8 个工具；
+   - 类型：**http**（Streamable HTTP）
+   - 地址：`http://127.0.0.1:8000/mcp`
+3. 若 WorkBuddy 支持直接编辑配置文件，等价配置（mcp.json）：
+
+   ```json
+   {
+     "mcpServers": {
+       "jren-campus-assistant": {
+         "type": "http",
+         "url": "http://127.0.0.1:8000/mcp"
+       }
+     }
+   }
+   ```
+
+4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 8 个工具；
    试着问「查询课程列表」或「今天的计划是什么」
 
-> 手机浏览器访问 `http://<局域网IP>:8000/health` 能返回 JSON，
-> 说明网络与防火墙已通，问题只在 QClaw 配置。
+> 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址
+> `http://<电脑IP>:8000/mcp` 并确保防火墙放行 8000 端口、两端同一网络。
 
-## 5. QClaw 定时任务配置（主通道）
+## 5. WorkBuddy 定时任务配置（主通道）
+
+用 WorkBuddy 的**「自动化」功能**创建两个定时任务（支持每日 / CRON 触发，可调用已连接的 MCP 工具）：
 
 | 定时任务 | 触发时间 | 调用工具 | 用途 |
 |----------|----------|----------|------|
 | 生成次日计划 | 每天 21:00 | `generate_tomorrow_plan` | 预生成明日计划草案 |
 | 推送计划预览 | 每天 08:00 | `get_today_plan_preview` | 把今日计划文本推到微信（方案 A 主提醒） |
 
-建议 QClaw 的任务提示词（可按 QClaw 的模板语言调整）：
+建议的自动化指令文本（创建任务时填写，可按 WorkBuddy 的模板语言调整）：
 
 ```
 每天 21:00：调用 jren-campus-assistant 的 generate_tomorrow_plan 工具生成次日计划，
@@ -124,18 +135,21 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 ```
-每天 08:00：调用 get_today_plan_preview 工具，把返回的文本原样推送给用户。
+每天 08:00：调用 get_today_plan_preview 工具，把返回的文本原样推送给我。
 ```
+
+> 💡 微信推送：先在 WorkBuddy 里完成 IM 接入（微信 / 企业微信等），
+> 08:00 任务的结果即可自动发到你的微信（手机远程触发同理）。
 
 ## 6. 后端 21:00 兜底（APScheduler）
 
-即使 QClaw 未触发 / 未配置，只要后端进程在运行，每天 21:00 也会自动生成次日计划：
+即使 WorkBuddy 未触发 / 未配置，只要后端进程在运行，每天 21:00 也会自动生成次日计划：
 
 - 实现：`backend/mcp_server/scheduler_jobs.py`（BackgroundScheduler + CronTrigger）
 - 时区：Asia/Shanghai；错过触发点（如电脑休眠）1 小时内补跑
 - 开关与环境变量见第 8 节表格；启动日志会打印任务状态
 
-> 注意：兜底只生成草案，**确认与日历写入仍需用户操作**（QClaw 对话确认或手动确认）。
+> 注意：兜底只生成草案，**确认与日历写入仍需用户操作**（WorkBuddy 对话确认或手动确认）。
 
 ## 7. Notion Calendar 写入（双保险）
 
@@ -184,7 +198,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 ## 9. 微信通道实测记录
 
-> 表格用于记录真实联调结果（单向 = QClaw→微信推送；双向 = 微信回复→QClaw 调工具）。
+> 表格用于记录真实联调结果（单向 = WorkBuddy→微信推送；双向 = 微信回复→WorkBuddy 调工具）。
 
 | 日期 | 场景 | 通道 | 结果 | 备注 |
 |------|------|------|------|------|
@@ -196,13 +210,14 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 ## 10. 常见问题（FAQ）
 
-**Q：QClaw 提示连不上 / 超时？**
-A：① 后端是否 `--host 0.0.0.0` 启动；② 手机和电脑是否同一 Wi-Fi；
-③ `ipconfig` 的 IP 是否填对；④ 防火墙是否放行 8000。
+**Q：WorkBuddy 提示连不上 / 超时？**
+A：① 后端是否在跑（浏览器开 `http://127.0.0.1:8000/health` 应返回 ok）；② MCP 地址是否
+`http://127.0.0.1:8000/mcp`；③ 类型是否选 **http**（Streamable HTTP）；④ 若 WorkBuddy 装在其他设备，
+改用 `http://<电脑IP>:8000/mcp` 并确认防火墙放行 8000、两端同一网络。
 
-**Q：局域网 IP 变化了怎么办？**
+**Q：WorkBuddy 装到别的设备时局域网 IP 变化了怎么办？**
 A：家用路由器一般 DHCP 分配，重启可能变。建议在路由器里给电脑绑定静态 IP，
-或每次重启后重新确认 IP（QClaw 里改地址）。
+或每次重启后重新确认 IP（WorkBuddy 里改地址）。同机部署（127.0.0.1）无此问题。
 
 **Q：`/mcp` 为什么不需要鉴权？**
 A：单用户家庭局域网使用，未加认证；请勿把 8000 端口暴露到公网。
@@ -221,7 +236,7 @@ A：写入值带 `+08:00` 偏移，Notion 应按数据库所在时区正确显�
 
 ## 11. 相关文档
 
-- [docs/architecture.md](architecture.md) 2.1 载体层（Notion Calendar + QClaw）
+- [docs/architecture.md](architecture.md) 2.1 载体层（Notion Calendar + WorkBuddy）
 - [docs/vision.md](vision.md) 提醒链路（方案 A）与产品决策
 - [docs/mcp-client.md](mcp-client.md) MCP 数据接入层（Notion OAuth 等）
 - [docs/database.md](database.md) 表结构（plan_items / plan_versions / calibration_stats）

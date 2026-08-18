@@ -329,7 +329,7 @@ def _parse_study_hours(value: str) -> tuple[time, time] | None:
 
 
 def preview_plan_text(db: Session, plan_date: date) -> str:
-    """今日/某日计划 → 微信友好文本（供 QClaw 08:00 推送）。"""
+    """今日/某日计划 → 微信友好文本（供 WorkBuddy 08:00 推送）。"""
     iso = plan_date.isoformat()
     items = (
         db.query(PlanItem)
