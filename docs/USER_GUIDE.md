@@ -40,6 +40,8 @@
 
 ## 4. 详细步骤
 
+> 💻 **先分清你的终端**：窗口标题写着 **Windows PowerShell** 就用 PowerShell 命令；写着 **命令提示符（CMD）** 就用 CMD 命令。本手册两者都给。
+
 ### 4.1 获取代码
 
 **方式 A（推荐，用 git）：**
@@ -58,10 +60,26 @@ cd jren-campus-assistant
 ```bash
 cd backend
 python -m venv .venv
+```
+
+**激活虚拟环境**（激活成功后命令行最前面会出现 `(.venv)`）：
+
+**PowerShell**（推荐）：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+> 若提示「无法加载文件…禁止运行脚本」：先执行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`，输入 `Y` 确认，再重新激活。
+
+**CMD（命令提示符）**：
+
+```cmd
 .venv\Scripts\activate
 ```
 
-> Windows 激活后命令行前面会出现 `(.venv)`。macOS / Linux 用 `source .venv/bin/activate`。
+> macOS / Linux 用 `source .venv/bin/activate`。
+> 不想激活的话，把后面所有 `python` 换成 `.\.venv\Scripts\python.exe`（PowerShell）或 `.venv\Scripts\python.exe`（CMD）即可，效果一样。
 
 ```bash
 pip install -r requirements.txt
@@ -131,17 +149,27 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 **③ 把集成连到数据库**
 - 打开数据库页面 → 右上角 `⋯` → `Connections` → 添加你的集成
 
-**④ 绑定到后端**（后端运行中，终端执行）：
+**④ 绑定到后端**（后端运行中，两种方式任选）：
+
+- **方式一（推荐，图形界面，不用敲命令）**：浏览器打开 `http://127.0.0.1:8000/docs` → 找到 `POST /api/data-sources` → 点 **Try it out** → 请求体填：
+
+```json
+{
+  "source_type": "notion",
+  "name": "Notion",
+  "config": "{\"tokens\":{\"access_token\":\"ntn_你的令牌\"}}"
+}
+```
+
+→ 点 **Execute**，返回 `200` 即绑定成功。
+
+- **方式二（命令行）**：⚠️ PowerShell 必须写 `curl.exe`（`curl` 是别名，语法不兼容）：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/data-sources ^
-  -H "Content-Type: application/json" ^
-  -d "{\"source_type\":\"notion\",\"name\":\"Notion\",\"config\":\"{\\\"tokens\\\":{\\\"access_token\\\":\\\"ntn_你的令牌\\\"}}\"}"
+curl.exe -X POST http://127.0.0.1:8000/api/data-sources -H "Content-Type: application/json" -d "{\"source_type\":\"notion\",\"name\":\"Notion\",\"config\":\"{\\\"tokens\\\":{\\\"access_token\\\":\\\"ntn_你的令牌\\\"}}\"}"
 ```
 
 **⑤ 告诉后端日历数据库 ID**：设置环境变量 `JREN_NOTION_CALENDAR_DB=你的数据库ID`，然后重启后端。
-
-> 嫌 curl 麻烦：直接用接口文档页面 `http://127.0.0.1:8000/docs` 里的 `/api/data-sources` 接口操作，效果一样。
 
 ### 4.8 WorkBuddy 连接 MCP
 
