@@ -33,29 +33,44 @@ for /f "delims=" %%v in ('%PYCMD% -c "import sys; print(sys.version.split()[0])"
 echo       Using: %PYCMD%   (Python %PYVER%)
 echo.
 
-REM ---------- Step 2: create venv ----------
-if exist ".venv\Scripts\python.exe" (
-    echo [2/4] .venv already exists, skipping.
-    goto :install_deps
-)
+REM ---------- Step 2: prepare venv (best effort) ----------
+REM If venv cannot be created (some systems interfere with .venv),
+REM we fall back to installing into the user's Python directly.
+if exist ".venv\Scripts\python.exe" goto :install_deps
 echo [2/4] Creating virtual environment (.venv)...
-%PYCMD% -m venv .venv
-if errorlevel 1 goto :venv_failed
-if not exist ".venv\Scripts\python.exe" goto :venv_failed
+%PYCMD% -m venv .venv >nul 2>&1
+if errorlevel 1 goto :no_venv
+if not exist ".venv\Scripts\python.exe" goto :no_venv
+echo.
+goto :install_deps
+
+:no_venv
+echo       (venv unavailable - will install into your Python directly)
 echo.
 
 :install_deps
 echo [3/4] Installing dependencies (may take a few minutes)...
 set "PYTHONUTF8=1"
-call ".venv\Scripts\activate.bat"
-python -m pip install --upgrade pip --quiet
-pip install -r backend\requirements.txt
-if errorlevel 1 goto :pip_failed
+if exist ".venv\Scripts\python.exe" (
+    call ".venv\Scripts\activate.bat"
+    python -m pip install --upgrade pip --quiet
+    pip install -r backend\requirements.txt
+    if errorlevel 1 goto :pip_failed
+) else (
+    py -3 -m pip install --user --upgrade pip --quiet
+    py -3 -m pip install --user -r backend\requirements.txt
+    if errorlevel 1 goto :pip_failed
+)
 echo.
 
 echo [4/4] Initializing database...
-python -m backend.scripts.init_db
-if errorlevel 1 goto :db_failed
+if exist ".venv\Scripts\python.exe" (
+    .venv\Scripts\python.exe -m backend.scripts.init_db
+    if errorlevel 1 goto :db_failed
+) else (
+    py -3 -m backend.scripts.init_db
+    if errorlevel 1 goto :db_failed
+)
 echo.
 
 echo ============================================
@@ -63,7 +78,6 @@ echo   Setup complete!
 echo.
 echo   Next steps:
 echo     1. Double-click  backend\scripts\start_backend.bat
-echo        (or run: uvicorn backend.main:app --host 0.0.0.0 --port 8000)
 echo     2. Health check:  http://127.0.0.1:8000/health
 echo     3. Follow the user manual: docs/USER_GUIDE.md
 echo ============================================
@@ -85,15 +99,6 @@ echo     Then close this window and run setup.bat again.
 echo.
 echo   Option B: install real Python
 echo     winget install Python.Python.3.12
-echo.
-pause
-exit /b 1
-
-:venv_failed
-echo.
-echo ERROR: Failed to create virtual environment.
-echo 'python' may be the Store placeholder. Turn off the alias
-echo (Win+R -^> ms-settings:appexecutionaliases) or run: py -3 -m venv .venv
 echo.
 pause
 exit /b 1
