@@ -419,7 +419,7 @@ def confirm_plan(
                 "updated": sync_result.updated,
                 "unchanged": sync_result.unchanged,
             }
-        except Exception as exc:  # noqa: BLE001 —— 日历写入是双保险，失败不阻断确认
+        except Exception as exc:  # noqa: BLE001 —— 日历写入尽力而为，失败不阻断确认
             notion_sync = {"error": str(exc)}
 
     return ConfirmResult(

@@ -1,21 +1,26 @@
 """Notion Calendar 写入 service：plan_items 幂等写入 Notion 日程数据库。
 
-设计依据 docs/vision.md「提醒链路（方案 A）」：Notion Calendar 事件提醒
-作为 WorkBuddy 微信推送的双保险（电脑关机时云端兜底）。
+设计依据 docs/vision.md「提醒链路（方案 A）」：Notion Calendar 同步展示计划事件，
+08:00 提醒由 WorkBuddy 微信推送承担（Notion API 限制见下）。
 
 传输：REST 直连 api.notion.com（NotionRestClient，Bearer 集成令牌；
 mcp.notion.com 不接受集成令牌，见 Issue #26）。
 - 工具：query_database（查当日已有事件）/ create_page（新建）/ update_page（更新）
 
 幂等策略：按「日期（date 属性过滤当日）+ 标题精确匹配」定位已有事件
-- 不存在 → create_page（属性含日期起止 + 08:00 提醒 + 类型 select）
+- 不存在 → create_page（属性含日期起止 + 类型 select）
 - 存在但时间/标题/类型有变化 → update_page
 - 完全一致 → 跳过（unchanged）
 
 属性名可配置（数据源 config.props，默认中文界面常用名：名称 / 日期 / 类型）。
 
 时间说明：日期时间写入带 ``+08:00`` 偏移（Notion API 对无偏移值按 UTC 解析，
-会导致 +8 时区显示偏差）；提醒用绝对时间 ``08:00``，事件当天触发。
+会导致 +8 时区显示偏差）。
+
+> ⚠️ 提醒（reminder）说明：Notion API 限制 reminder 只能用于**不含时间**的
+> date 属性；带起止时间（datetime）的事件不允许带提醒字段。因此本实现
+> **不写 reminder**，08:00 提醒职责由 WorkBuddy 微信推送承担（方案 A 主通道，
+> 见 docs/vision.md 提醒链路）。
 """
 from __future__ import annotations
 
@@ -42,9 +47,6 @@ DEFAULT_PROPS: dict[str, str] = {
     "date": "日期",
     "type": "类型",
 }
-
-#: 事件提醒时间（绝对时间，事件当天触发；方案 A 双保险）
-REMINDER_TIME = "08:00"
 
 
 class NotionCalendarError(Exception):
@@ -129,7 +131,11 @@ class NotionCalendarWriter:
         )
 
     def _build_properties(self, item: PlanItem) -> dict:
-        """构造 Notion 事件属性：名称 / 日期（起止 + 08:00 提醒）/ 类型。"""
+        """构造 Notion 事件属性：名称 / 日期（起止时间，+08:00 偏移）。
+
+        不带 reminder：Notion API 限制 datetime 属性不能带提醒（见模块 docstring），
+        08:00 提醒由 WorkBuddy 微信推送承担。
+        """
         return {
             self.props["title"]: {
                 "title": [{"type": "text", "text": {"content": item.title}}]
@@ -138,7 +144,6 @@ class NotionCalendarWriter:
                 "date": {
                     "start": f"{item.date}T{item.start_time}:00+08:00",
                     "end": f"{item.date}T{item.end_time}:00+08:00",
-                    "reminder": {"time": REMINDER_TIME},
                 }
             },
             self.props["type"]: {"select": {"name": item.item_type}},

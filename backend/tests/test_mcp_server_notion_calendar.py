@@ -66,7 +66,7 @@ def rest_calls(fake: FakeNotionRest, method: str) -> list[dict]:
 # ---------- 幂等写入 ----------
 
 
-def test_sync_creates_missing_events_with_reminder(db_session):
+def test_sync_creates_missing_events(db_session):
     with db_session() as db:
         add_plan_item(db, "高数作业", "10:00", "11:00", "task")
         fake = fake_rest()
@@ -79,11 +79,12 @@ def test_sync_creates_missing_events_with_reminder(db_session):
         kwargs = creates[0]
         assert kwargs["parent_database_id"] == DB_ID
         props = kwargs["properties"]
-        # 标题 / 日期（+08:00 偏移，避免 Notion 按 UTC 解析偏差）/ 08:00 提醒 / 类型
+        # 标题 / 日期（+08:00 偏移，避免 Notion 按 UTC 解析偏差）/ 类型
+        # （不带 reminder：Notion API 限制 datetime 属性不能带提醒，08:00 提醒由微信推送承担）
         assert props["名称"]["title"][0]["text"]["content"] == "高数作业"
         assert props["日期"]["date"]["start"] == "2026-08-19T10:00:00+08:00"
         assert props["日期"]["date"]["end"] == "2026-08-19T11:00:00+08:00"
-        assert props["日期"]["date"]["reminder"] == {"time": "08:00"}
+        assert "reminder" not in props["日期"]["date"]
         assert props["类型"]["select"] == {"name": "task"}
 
 

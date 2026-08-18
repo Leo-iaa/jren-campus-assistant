@@ -21,7 +21,7 @@ backend/mcp_server/server.py    ← 8 个 MCP 工具（薄封装）
    ▼
 backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/完成/查询）
    ├── backend/scheduler/       ← 遗忘曲线 + 时间表规划器 + 校准（纯算法）
-   ├── backend/mcp_server/notion_calendar.py  ← Notion 日历写入（幂等 + 08:00 提醒）
+   ├── backend/mcp_server/notion_calendar.py  ← Notion 日历写入（幂等，时段块事件）
    └── backend/mcp_server/scheduler_jobs.py   ← APScheduler 21:00 兜底
 ```
 
@@ -71,7 +71,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 |------|------|------|------|
 | `generate_tomorrow_plan` | `date?`（YYYY-MM-DD，默认明日） | JSON：placed / dropped / skipped | 生成计划草案（draft）。已确认的计划不自动重排 |
 | `get_today_plan_preview` | `date?`（默认今日） | 纯文本 | 微信友好预览：时间轴 + 确认状态，适合 08:00 推送 |
-| `confirm_plan` | `date`（必填） | JSON：confirmed_count / version / notion_sync | 确认计划 → 版本快照 → 写 Notion 日历（带 08:00 提醒） |
+| `confirm_plan` | `date`（必填） | JSON：confirmed_count / version / notion_sync | 确认计划 → 版本快照 → 写 Notion 日历（时段块事件） |
 | `adjust_plan_item` | `item_id`、`start_time`、`end_time`、`title?` | JSON：更新后的计划项 | 调整单项时间/标题；冲突会报错 |
 | `mark_done` | `item_id`、`actual_minutes?` | JSON：计划项 + 校准记录 | 标记完成；task/review 记录「预估 vs 实际」校准 |
 | `get_courses` | 无 | JSON 数组 | 课程列表（含 S/A/B/C 档位） |
@@ -151,17 +151,24 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 > 注意：兜底只生成草案，**确认与日历写入仍需用户操作**（WorkBuddy 对话确认或手动确认）。
 
-## 7. Notion Calendar 写入（双保险）
+## 7. Notion Calendar 写入
 
 确认计划时（`confirm_plan`）自动把当日 plan_items **幂等**写入 Notion 日程数据库，
-每个事件带 **08:00 提醒**（电脑关机时由 Notion 云端兜底提醒）。
+事件含**起止时间**（日历显示为时段块）。
+
+> ⚠️ **关于 08:00 提醒**：Notion API 限制 `reminder` 只能用于**不含时间**的 date 属性，
+> 带起止时间（datetime）的事件不允许带提醒。因此写入**不带 reminder**，
+> 08:00 提醒由 **WorkBuddy 微信推送**承担（方案 A 主通道，见 [docs/vision.md](vision.md) 提醒链路）。
 
 ### 7.1 前置条件
 
 1. 已绑定 Notion 数据源并配置**集成令牌**（`config.tokens.access_token`，见 [docs/mcp-client.md](mcp-client.md) 3.1；REST 直连，无需 OAuth）
 2. 在 Notion 建一个**日程数据库**（Calendar database，模板选「日程」），
    记下数据库 ID（URL 中 `.../<32位ID>?v=...` 的那段）
-3. 告诉后端日历数据库 ID（二选一）：
+3. 数据库需包含以下属性（默认名，可在 config.props 覆盖）：
+   - **名称**（title，必选）；**日期**（Date 类型，**需包含时间**）；**类型**（Select 类型）
+   - 模板缺属性时在数据库「属性」里手动添加
+4. 告诉后端日历数据库 ID（二选一）：
    - 环境变量：`JREN_NOTION_CALENDAR_DB=<数据库ID>`
    - 或写进数据源 config：`PATCH /api/data-sources/{id}`，config JSON 加
      `"calendar_database_id": "<数据库ID>"`
@@ -186,7 +193,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
   完全一致 → 跳过
 - 同一天重复确认不会产生重复事件
 - 确认结果里 `notion_sync` 字段报告 `created / updated / unchanged`；
-  Notion 未授权或未配置时该字段为错误信息或 null（**不阻断确认**，双保险语义）
+  Notion 未授权或未配置时该字段为错误信息或 null（**不阻断确认**）
 
 ## 8. 环境变量一览
 

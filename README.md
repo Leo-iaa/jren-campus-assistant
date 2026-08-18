@@ -15,7 +15,7 @@
 
 1. 🌙 **前一晚 21:00**：WorkBuddy 定时任务触发后端，自动读取当日数据（课表 / 新作业 / 新笔记），生成「明日计划」
 2. 🗓️ **计划写入 Notion Calendar**（原生日历，手机 / 电脑 / 平板三端同步）
-3. ☀️ **08:00**：微信收到「今日计划」推送（WorkBuddy 定时任务），Notion Calendar 事件提醒双保险
+3. ☀️ **08:00**：微信收到「今日计划」推送（WorkBuddy 定时任务），Notion Calendar 同步展示事件
 4. 💬 **想调整？** 直接在 WorkBuddy / 微信里说：「把高数作业挪到晚上」「确认今天的计划」
 5. ✅ 确认后计划生效 → 完成情况自动记录 → 持续校准时间预估 —— **越用越懂你**
 
@@ -158,7 +158,7 @@ python -m pytest
 2. WorkBuddy（设置 → MCP 服务）添加 MCP Server：类型 **http**，地址 `http://127.0.0.1:8000/mcp`（同机部署）
 3. WorkBuddy 配置两个「自动化」定时任务：每天 21:00 → `generate_tomorrow_plan`；每天 08:00 → `get_today_plan_preview` 推微信
 4. 后端 APScheduler 21:00 自动生成次日计划（WorkBuddy 未触发也能跑，兜底）
-5. 确认计划自动写入 Notion Calendar（事件带 08:00 提醒，双保险）
+5. 确认计划自动写入 Notion Calendar（时段块事件；08:00 提醒以 WorkBuddy 微信推送为主）
 6. 手机微信远程操控 WorkBuddy，对话式确认 / 调整计划（微信通道双向能力以实测为准）
 
 ### 前端（可选）
