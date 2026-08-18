@@ -16,6 +16,7 @@
 - 提醒通道定稿（方案 A）：QClaw 微信推送为主 + Notion Calendar 提醒双保险（#18）
 - 移除备用前端 frontend/（数据源绑定 / 档位配置改走 API 与 WorkBuddy，#30）
 - 用户使用手册 `docs/USER_GUIDE.md` + README 手册入口（#32）
+- 手册修正：PowerShell / CMD 激活命令区分、Notion 绑定改 Swagger UI 图形界面优先（#34）
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`

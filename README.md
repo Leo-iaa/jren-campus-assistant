@@ -126,7 +126,8 @@ cd jren-campus-assistant/backend
 
 # 1. 创建虚拟环境并安装依赖
 python -m venv .venv
-# Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
+# 激活：PowerShell → .\.venv\Scripts\Activate.ps1（若被拦截先执行 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned）
+#      CMD → .venv\Scripts\activate    macOS/Linux → source .venv/bin/activate
 pip install -r requirements.txt
 
 # 2. 初始化数据库（生成 backend/data/jren.db，幂等可重复执行）
