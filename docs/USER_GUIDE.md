@@ -57,7 +57,24 @@ cd jren-campus-assistant
 
 ### 4.2 安装后端依赖
 
-```bash
+**第 0 步：确认 Python 是真的装好了**（先做这个，跳过会踩坑）：
+
+```powershell
+python --version
+```
+
+- ✅ 正常：输出 `Python 3.11.x` 之类的版本号 → 继续下一步
+- ❌ 异常：提示 "Python was not found"、弹出微软商店、或**什么都没输出** → 你的 `python` 是**微软商店占位符**（假的，装样子不干活），`python -m venv` 会"假装成功"但什么都不创建。安装真 Python：
+
+```powershell
+winget install Python.Python.3.12
+```
+
+装完**关闭并重新打开终端**，再执行 `python --version` 确认能输出版本号，然后继续。
+
+**第 1 步：创建并激活虚拟环境**：
+
+```powershell
 cd backend
 python -m venv .venv
 ```
