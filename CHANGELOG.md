@@ -25,6 +25,8 @@
 - 新增 `config_ical.bat` / `config_ical.py`：课表一键导入（.ics 拖进窗口即可，自动绑定 + 同步；用户真实课表已导入 13 门课 / 20 时间块，#46）
 - 预览回退：本地无计划时 `get_today_plan_preview` 自动读 Notion 日历当天事件（AI 回答与日历一致；+2 测试，#48）
 - 修复自启脚本绝对路径：`start_backend_hidden.vbs` 更新为当前仓库位置（#50）
+- `config_notion` 支持直接粘贴日程页面整条链接（自动提取 32 位数据库 ID，忽略视图 ID，#52）
+- README 补充「隐私与数据」说明（数据全本地、密钥自配、公开仓库须知，#53）
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`
