@@ -49,6 +49,7 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_today_plan_preview": (
         "获取今日计划文本（默认今天，可指定日期），适合直接推送微信。"
         "包含课程 / 作业 / 复习 / 杂项时间轴与确认状态。"
+        "本地无计划时自动回退读取 Notion 日历当天事件（与用户日历所见一致）。"
     ),
     "confirm_plan": (
         "确认某日计划（YYYY-MM-DD，必填）：draft/adjusted 项转为 confirmed，"

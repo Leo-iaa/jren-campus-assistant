@@ -205,6 +205,28 @@ class NotionCalendarWriter:
                     return text
         return ""
 
+    def list_events_on(self, iso: str) -> list[dict]:
+        """查询某日已有事件（供预览回退展示），按开始时间排序。
+
+        返回 [{start, end, title, type}]；属性名按 self.props 配置解析。
+        """
+        pages = self._find_existing(iso)
+        events: list[dict] = []
+        for page in pages:
+            props = page.get("properties") or {}
+            date_prop = (props.get(self.props["date"]) or {}).get("date") or {}
+            type_prop = (props.get(self.props["type"]) or {}).get("select") or {}
+            events.append(
+                {
+                    "start": str(date_prop.get("start", "")),
+                    "end": str(date_prop.get("end", "")),
+                    "title": self._event_title(page) or "(无标题)",
+                    "type": type_prop.get("name", "misc"),
+                }
+            )
+        events.sort(key=lambda e: e["start"])
+        return events
+
     def _page_matches(self, page: dict, item: PlanItem) -> bool:
         """比对已有事件与目标计划项是否一致（仅比较我们写入的字段）。"""
         props = page.get("properties") or {}

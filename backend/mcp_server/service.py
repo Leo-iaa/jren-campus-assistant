@@ -341,6 +341,33 @@ def _parse_study_hours(value: str) -> tuple[time, time] | None:
 # ---------- 预览 ----------
 
 
+def _preview_from_notion(db: Session, plan_date: date) -> list[str]:
+    """本地无计划时，回退读取 Notion 日历当天事件（与用户日历所见一致）。
+
+    未绑定 Notion / 未配置日历库 / 查询失败 → 返回空列表（预览回落"无安排"文案）。
+    """
+    try:
+        from backend.mcp_server.notion_calendar import build_writer
+
+        writer = build_writer(db)
+        if writer is None:
+            return []
+        events = writer.list_events_on(plan_date.isoformat())
+        if not events:
+            return []
+        emoji = {"course": "📚", "task": "📝", "review": "🔁", "misc": "🧘"}
+        lines: list[str] = []
+        for ev in events:
+            start = ev["start"]
+            hm = start[11:16] if len(start) >= 16 and start[10] == "T" else start
+            icon = emoji.get(ev["type"], "📌")
+            lines.append(f"🕗 {hm} {icon} {ev['title']}")
+        return lines
+    except Exception:
+        # 回退路径任何异常都不应影响预览（宁可显示"无安排"）
+        return []
+
+
 def preview_plan_text(db: Session, plan_date: date) -> str:
     """今日/某日计划 → 微信友好文本（供 WorkBuddy 08:00 推送）。"""
     iso = plan_date.isoformat()
@@ -356,6 +383,13 @@ def preview_plan_text(db: Session, plan_date: date) -> str:
 
     if not items:
         lines.append("")
+        notion_events = _preview_from_notion(db, plan_date)
+        if notion_events:
+            lines.append("（本地暂无计划，以下为 Notion 日历中的安排）")
+            lines.extend(notion_events)
+            lines.append("")
+            lines.append("💬 想重新规划这一天？回复「生成明天的计划」。")
+            return "\n".join(lines)
         lines.append("今天还没有安排。可以回复「生成明天的计划」，或去网页端手动添加。")
         return "\n".join(lines)
 
