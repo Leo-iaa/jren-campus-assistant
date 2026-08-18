@@ -10,7 +10,7 @@ pydantic-settings>=2.3
 icalendar>=5.0
 tzdata>=2024.1
 
-# MCP Server 暴露层（QClaw 接入，Streamable HTTP）
+# MCP Server 暴露层（WorkBuddy 接入，Streamable HTTP）
 mcp>=2.0.0
 apscheduler>=3.10
 

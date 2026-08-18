@@ -1,4 +1,4 @@
-"""MCP Server 暴露层：把后端能力包装为 MCP 工具（QClaw 等客户端可调用）。
+"""MCP Server 暴露层：把后端能力包装为 MCP 工具（WorkBuddy 等客户端可调用）。
 
 - 传输：Streamable HTTP，挂载 ``/mcp`` 路径（接线见 ``backend/main.py``）
 - 工具（8 个，对齐 docs/mcp-server.md）：
@@ -40,7 +40,7 @@ from backend.mcp_server.service import (
     tomorrow,
 )
 
-#: 工具说明（QClaw 等客户端据此理解用法）
+#: 工具说明（WorkBuddy 等客户端据此理解用法）
 _TOOL_DESCRIPTIONS: dict[str, str] = {
     "generate_tomorrow_plan": (
         "生成次日计划草案（默认明日，可指定日期 YYYY-MM-DD）。"

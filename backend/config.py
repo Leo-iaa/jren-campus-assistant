@@ -37,7 +37,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
-    # MCP Server 暴露层（QClaw 接入）
+    # MCP Server 暴露层（WorkBuddy 接入）
     # 每天定时生成次日计划（后端兜底；测试/开发可置 false 关闭）
     mcp_scheduler_enabled: bool = True
     # 计划生成时间（HH:MM，Asia/Shanghai）

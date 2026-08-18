@@ -6,7 +6,7 @@
 或（backend/ 目录内）：
     uvicorn main:app --reload
 
-MCP Server（Streamable HTTP）挂载在 /mcp 路径（QClaw 接入地址：
+MCP Server（Streamable HTTP）挂载在 /mcp 路径（WorkBuddy 接入地址：
 http://<局域网IP>:8000/mcp），其会话管理器生命周期由本应用 lifespan 接管；
 APScheduler 21:00 定时任务同样在 lifespan 中按配置启停。
 """
@@ -35,7 +35,7 @@ def create_app(db_factory: Callable[[], Session] | None = None) -> FastAPI:
     # MCP Server 先建：lifespan 需要引用其 session manager
     mcp_server = build_mcp_server(db_factory=db_factory)
     # Streamable HTTP ASGI 应用；host=0.0.0.0 关闭 localhost 专属的 DNS
-    # rebinding 防护，允许 QClaw 通过局域网 IP 访问
+    # rebinding 防护，允许 WorkBuddy 通过局域网 IP 访问
     mcp_app = mcp_server.streamable_http_app(streamable_http_path="/mcp", host="0.0.0.0")
 
     @asynccontextmanager
@@ -53,7 +53,7 @@ def create_app(db_factory: Callable[[], Session] | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # MCP Server 暴露层：QClaw 连接 http://<局域网IP>:8000/mcp
+    # MCP Server 暴露层：WorkBuddy 连接 http://<局域网IP>:8000/mcp
     # 用 Route 直接挂 ASGI 端点（而非 Mount），避免 /mcp → /mcp/ 的 307 重定向
     app.router.routes.insert(0, Route("/mcp", endpoint=mcp_app, name="mcp"))
 

@@ -3,7 +3,7 @@
 > 基于大模型的智能校园日程规划与复习安排助手 —— 计划型（J人）学生的「第二大脑」。
 
 ![Status](https://img.shields.io/badge/status-开发中-blue)
-![载体](https://img.shields.io/badge/载体-Notion%20Calendar%20%2B%20QClaw-blue)
+![载体](https://img.shields.io/badge/载体-Notion%20Calendar%20%2B%20WorkBuddy-blue)
 ![Backend](https://img.shields.io/badge/backend-FastAPI-green)
 ![AI](https://img.shields.io/badge/AI-LLM%20%2B%20MCP-orange)
 
@@ -13,10 +13,10 @@
 
 ### 一天的典型闭环
 
-1. 🌙 **前一晚 21:00**：QClaw 定时任务触发后端，自动读取当日数据（课表 / 新作业 / 新笔记），生成「明日计划」
+1. 🌙 **前一晚 21:00**：WorkBuddy 定时任务触发后端，自动读取当日数据（课表 / 新作业 / 新笔记），生成「明日计划」
 2. 🗓️ **计划写入 Notion Calendar**（原生日历，手机 / 电脑 / 平板三端同步）
-3. ☀️ **08:00**：微信收到「今日计划」推送（QClaw 定时任务），Notion Calendar 事件提醒双保险
-4. 💬 **想调整？** 直接在 QClaw / 微信里说：「把高数作业挪到晚上」「确认今天的计划」
+3. ☀️ **08:00**：微信收到「今日计划」推送（WorkBuddy 定时任务），Notion Calendar 事件提醒双保险
+4. 💬 **想调整？** 直接在 WorkBuddy / 微信里说：「把高数作业挪到晚上」「确认今天的计划」
 5. ✅ 确认后计划生效 → 完成情况自动记录 → 持续校准时间预估 —— **越用越懂你**
 
 ## ✨ 核心功能
@@ -27,7 +27,7 @@
 | 🧠 知识点智能提取 | LLM 自动把当天笔记切分为「知识点记忆单元」并评估难度 |
 | 📈 遗忘曲线复习调度 | 按课程档位（S/A/B/C，用户自设）与知识点难度自动安排复习，结合作业 deadline 反推优先级 |
 | 🗓️ 时间表约束规划 | 固定课程 + 可变任务 + 可用时间片，生成不冲突的日程草案 |
-| ✅ 用户确认机制 | 草案先呈现给你（Notion Calendar + QClaw 对话），批准/调整后才写入日历 |
+| ✅ 用户确认机制 | 草案先呈现给你（Notion Calendar + WorkBuddy 对话），批准/调整后才写入日历 |
 | 🔄 习惯自适应 | 持续记录「预估 vs 实际」耗时，按课程 × 时段 × 难度自动校准后续规划 |
 | 💡 主动建议 | 遗忘窗口提醒、任务过载建议拆分/延后、每日计划晨推 |
 
@@ -37,10 +37,10 @@
 ┌─────────────────────────────────────────────────┐
 │  载体层（替代自建前端，双载体）                    │
 │  ├─ 日程展示：Notion Calendar（原生 App，三端同步）│
-│  └─ AI 交互：QClaw + 微信（对话确认/调整/查询）    │
+│  └─ AI 交互：WorkBuddy + 微信（对话确认/调整/查询）    │
 ├─────────────────────────────────────────────────┤
 │  后端：Python FastAPI                            │
-│  ├─ MCP Server 暴露层（对接 QClaw，8 个工具）     │
+│  ├─ MCP Server 暴露层（对接 WorkBuddy，8 个工具）     │
 │  ├─ MCP 客户端层（Notion/Obsidian/iCal）         │
 │  ├─ 知识提取层（LLM 抽取知识点与难度）            │
 │  ├─ 遗忘曲线调度器（复习间隔算法）                │
@@ -59,10 +59,10 @@
 | 层 | 选型 |
 |----|------|
 | 日程载体 | Notion Calendar（原生 App：事件写入、提醒、三端同步） |
-| AI 载体 | QClaw（腾讯：MCP + 定时任务 + 微信远程；免费额度约 800 积分/天） |
+| AI 载体 | WorkBuddy（腾讯 CodeBuddy：MCP + 定时任务 + 微信/企微/QQ/飞书/钉钉远程；免费额度以官方为准） |
 | 前端（可选） | React + Vite + PWA（已实现，作为备用界面保留） |
 | 后端 | Python FastAPI |
-| MCP | 客户端：Notion 官方 MCP Server / obsidian-mcp-server；服务端：MCP 暴露层（对接 QClaw） |
+| MCP | 客户端：Notion 官方 MCP Server / obsidian-mcp-server；服务端：MCP 暴露层（对接 WorkBuddy） |
 | 调度算法 | 遗忘曲线 + 约束规划（自研） |
 | 数据库 | SQLite → PostgreSQL（多用户时） |
 | LLM | 可配置（豆包 / DeepSeek / 扣子系等） |
@@ -91,7 +91,7 @@
 |------|------|------|
 | **Phase 0 · 设计** | 需求、架构、数据库设计 | ✅ 已完成 |
 | **Phase 1 · 核心** | 后端 11 表模型 / CRUD API / 调度算法 / MCP 接入 / 212 例测试；前端三页面（备用） | ✅ 已完成 |
-| **Phase 1.5 · 载体集成** | MCP Server 暴露层 / QClaw 对接 / Notion Calendar 写入 / 21:00 定时任务 | ✅ 已完成 |
+| **Phase 1.5 · 载体集成** | MCP Server 暴露层 / WorkBuddy 对接 / Notion Calendar 写入 / 21:00 定时任务 | ✅ 已完成 |
 | **Phase 2 · 自适应** | 校准数据回流、提醒完善、云端部署准备 | ⏳ 待启动 |
 | **Phase 3 · 扩展** | 多用户、手机推送、更多数据源 | ⏳ 待定 |
 
@@ -106,7 +106,7 @@ jren-campus-assistant/
 │   ├── schemas/       # Pydantic 请求/响应模型（校验与枚举）
 │   ├── scheduler/     # 遗忘曲线 + 时间表规划 + 习惯校准（已实现）
 │   ├── mcp_client/    # MCP 数据接入层（Notion / Obsidian / iCal adapter）
-│   ├── mcp_server/    # MCP Server 暴露层（QClaw 接入：8 工具 + 定时任务 + Notion 日历写入）
+│   ├── mcp_server/    # MCP Server 暴露层（WorkBuddy 接入：8 工具 + 定时任务 + Notion 日历写入）
 │   ├── scripts/       # 工具脚本（init_db.py 数据库初始化）
 │   ├── tests/         # pytest 测试（212 例）
 │   └── data/          # SQLite 数据库文件（运行时生成，不入库）
@@ -149,21 +149,21 @@ python -m pytest
 （`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`），登录后服务自动后台启动；
 自查：浏览器开 `http://127.0.0.1:8000/health`。详见 [docs/mcp-server.md](docs/mcp-server.md) 2.1 节。
 
-### QClaw 集成
+### WorkBuddy 集成
 
 > ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，8 个工具），
 > 完整配置见 [docs/mcp-server.md](docs/mcp-server.md)。
 
 1. 启动后端：`uvicorn backend.main:app --host 0.0.0.0 --port 8000`
-2. QClaw 中添加 MCP Server：类型 Streamable HTTP，地址 `http://<电脑局域网IP>:8000/mcp`
-3. QClaw 配置定时任务：每天 21:00 → `generate_tomorrow_plan`；每天 08:00 → `get_today_plan_preview` 推微信
-4. 后端 APScheduler 21:00 自动生成次日计划（QClaw 未触发也能跑，兜底）
+2. WorkBuddy（设置 → MCP 服务）添加 MCP Server：类型 **http**，地址 `http://127.0.0.1:8000/mcp`（同机部署）
+3. WorkBuddy 配置两个「自动化」定时任务：每天 21:00 → `generate_tomorrow_plan`；每天 08:00 → `get_today_plan_preview` 推微信
+4. 后端 APScheduler 21:00 自动生成次日计划（WorkBuddy 未触发也能跑，兜底）
 5. 确认计划自动写入 Notion Calendar（事件带 08:00 提醒，双保险）
-6. 手机微信远程操控 QClaw，对话式确认 / 调整计划（微信通道双向能力以实测为准）
+6. 手机微信远程操控 WorkBuddy，对话式确认 / 调整计划（微信通道双向能力以实测为准）
 
 ### 前端（可选）
 
-> 环境要求：Node.js 18+。当前为备用界面，主交互路径走 Notion Calendar + QClaw。
+> 环境要求：Node.js 18+。当前为备用界面，主交互路径走 Notion Calendar + WorkBuddy。
 
 ```bash
 cd frontend
@@ -194,4 +194,4 @@ npm run test       # 组件与纯函数测试
 - [产品愿景与需求](docs/vision.md)
 - [数据库设计](docs/database.md)
 - [MCP 数据接入层使用说明](docs/mcp-client.md)
-- [MCP Server 暴露层使用说明（QClaw 接入）](docs/mcp-server.md)
+- [MCP Server 暴露层使用说明（WorkBuddy 接入）](docs/mcp-server.md)

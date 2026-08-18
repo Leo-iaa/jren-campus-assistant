@@ -1,7 +1,7 @@
 """Notion Calendar 写入 service：plan_items 幂等写入 Notion 日程数据库。
 
 设计依据 docs/vision.md「提醒链路（方案 A）」：Notion Calendar 事件提醒
-作为 QClaw 微信推送的双保险（电脑关机时云端兜底）。
+作为 WorkBuddy 微信推送的双保险（电脑关机时云端兜底）。
 
 复用 ``backend/mcp_client/``：
 - 传输层 ``McpClient`` + ``HttpTransport``（backend/mcp_client/transport.py）

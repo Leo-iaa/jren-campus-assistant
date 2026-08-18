@@ -1,7 +1,7 @@
 """APScheduler 定时任务：每天 21:00 自动生成次日计划（后端兜底）。
 
-设计依据 docs/vision.md「提醒链路（方案 A）」：QClaw 的 21:00 定时任务是
-主通道；本模块保证即使 QClaw 未触发 / 未配置，只要后端进程在运行，
+设计依据 docs/vision.md「提醒链路（方案 A）」：WorkBuddy 的 21:00 定时任务是
+主通道；本模块保证即使 WorkBuddy 未触发 / 未配置，只要后端进程在运行，
 次日计划也会在每晚定时生成（草案，等待用户确认）。
 
 - 触发时间：``JREN_MCP_PLAN_GENERATE_TIME``（默认 21:00，HH:MM，Asia/Shanghai）
