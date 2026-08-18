@@ -33,7 +33,8 @@
 ```text
 第一步：双击 setup.bat          一键安装（自动完成所有环境配置，几分钟）
 第二步：双击 start_backend.bat  启动服务
-第三步：WorkBuddy 连接 + 配定时任务
+第三步：导入课表 + 配置 Notion（双击两个脚本，各粘贴一串码）
+第四步：WorkBuddy 连接 + 配定时任务
 ```
 
 ---
@@ -78,7 +79,16 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 
 **服务在不在跑？** 浏览器打开 `http://127.0.0.1:8000/health`，能看到 ok 就是在跑。
 
-### 4.5 配置 Notion（可选，但推荐）
+### 4.5 导入课表（必须做）
+
+1. 从教务系统导出课表（`.ics` 文件，如「2026春夏.ics」）
+2. **双击 `backend\scripts\config_ical.bat`**
+3. 把 `.ics` 文件**拖进窗口**（或粘贴完整路径）后回车
+4. 看到「同步完成」即导入成功 ✅（课程和上课时间自动写入系统）
+
+> 导入后每门课默认为 **A 档**；课程档位（S/A/B/C）的设置脚本即将提供。
+
+### 4.6 配置 Notion（可选，但推荐）
 
 计划确认后写入 Notion Calendar，需要四步（全在网页/记事本里操作）：
 
@@ -99,7 +109,7 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 - 看到「绑定成功」即完成 ✅
 - 脚本自动完成：检查服务 → 绑定数据源（已有则自动更新）→ 写入日历数据库 ID，不用再手动操作接口
 
-### 4.6 WorkBuddy 连接 MCP
+### 4.7 WorkBuddy 连接 MCP
 
 1. 打开 WorkBuddy → **设置 → MCP 服务** → 添加服务器
 2. 填写：
@@ -108,7 +118,7 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
    - 地址：`http://127.0.0.1:8000/mcp`
 3. 连接成功后，问 WorkBuddy：**「查询课程列表」**——能返回结果就说明联调成功 ✅
 
-### 4.7 WorkBuddy 定时任务（核心自动化）
+### 4.8 WorkBuddy 定时任务（核心自动化）
 
 用 WorkBuddy 的**「自动化」**功能创建两个定时任务：
 
