@@ -52,7 +52,7 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "confirm_plan": (
         "确认某日计划（YYYY-MM-DD，必填）：draft/adjusted 项转为 confirmed，"
-        "写入版本快照，并同步写入 Notion 日历（带 08:00 提醒，双保险）。"
+        "写入版本快照，并同步写入 Notion 日历（时段块事件；08:00 提醒由微信推送承担）。"
     ),
     "adjust_plan_item": (
         "调整单个计划项：item_id + 新 start_time/end_time（HH:MM），可选新 title。"

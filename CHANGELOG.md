@@ -52,6 +52,7 @@
 - 方案 A 本地部署（#22）：开机自启脚本 `backend/scripts/start_backend.bat`（端口占用检测防重复启动、日志落盘 `backend/data/server.log`、预留 `JREN_NOTION_CALENDAR_DB` 环境变量位）+ `start_backend_hidden.vbs`（隐藏窗口启动器，复制到系统「启动」文件夹即登录自启，替代需管理员的 schtasks）；`docs/mcp-server.md` 2.1 开机自启章节（含大白话自查方法）+ README 同步；脚本保持 ASCII 编码（cmd/WSH 按 ANSI 代码页解析）
 - AI 载体切换 WorkBuddy（#24）：QClaw 因体验问题弃用，载体换为 WorkBuddy（腾讯 CodeBuddy：MCP stdio/sse/http + 自动化定时任务 + 微信/企微/QQ/飞书/钉钉远程）；README / docs/{mcp-server,vision,architecture}.md 载体描述与连接/定时任务指引同步（同机部署连 `http://127.0.0.1:8000/mcp`，无需查局域网 IP）；后端代码注释同步；MCP 暴露层协议不变（标准 Streamable HTTP，后端零逻辑改动）
 - Notion 接入改 REST 直连（#26）：mcp.notion.com 不接受自建集成令牌（官方确认，一律 401），NotionAdapter / NotionCalendarWriter 从 MCP 传输改为直连 api.notion.com（新增 `mcp_client/notion_rest.py`，Bearer 集成令牌 + Notion-Version）；幂等写入与属性映射逻辑不变；测试 fake 传输层改 FakeNotionRest；docs/mcp-client.md 接入方式更新（OAuth 端点保留但非主路径）
+- Notion 日历写入适配（#26 补充）：Notion API 限制 reminder 只能用于不含时间的 date 属性，datetime 事件不允许带提醒——写入改为**不带 reminder**（事件保留起止时间，日历显示时段块），08:00 提醒职责由 WorkBuddy 微信推送承担；文档（README / mcp-server / vision）提醒链路描述同步更新
 
 [#1]: https://github.com/Leo-iaa/jren-campus-assistant/issues/1
 [#7]: https://github.com/Leo-iaa/jren-campus-assistant/issues/7
