@@ -8,22 +8,40 @@ echo   Jren Campus Assistant - One-Click Setup
 echo ============================================
 echo.
 
-REM ---------- Step 1: check Python ----------
+REM ---------- Step 1: find a working Python ----------
+REM The Microsoft Store "App Execution Alias" (WindowsApps\python.exe)
+REM can shadow the real Python and silently do nothing. So we probe
+REM python first; if it produces no output, fall back to the py launcher.
 echo [1/4] Checking Python...
-python --version >nul 2>&1
-if errorlevel 1 goto :no_python
-set "PYCHECK="
-for /f "delims=" %%i in ('python --version 2^>^&1') do set "PYCHECK=%%i"
-echo       Found: %PYCHECK%
-echo.
-if not exist ".venv\Scripts\python.exe" goto :create_venv
-echo       .venv already exists, skipping creation.
-goto :install_deps
 
-:create_venv
+set "PYCMD="
+set "PROBE="
+for /f "delims=" %%i in ('python -c "import sys; print(1)" 2^>nul') do set "PROBE=%%i"
+if "%PROBE%"=="1" set "PYCMD=python"
+if defined PYCMD goto :py_found
+
+set "PROBE="
+for /f "delims=" %%i in ('py -3 -c "import sys; print(1)" 2^>nul') do set "PROBE=%%i"
+if "%PROBE%"=="1" set "PYCMD=py -3"
+if defined PYCMD goto :py_found
+
+goto :no_python
+
+:py_found
+set "PYVER="
+for /f "delims=" %%v in ('%PYCMD% -c "import sys; print(sys.version.split()[0])" 2^>^&1') do set "PYVER=%%v"
+echo       Using: %PYCMD%   (Python %PYVER%)
+echo.
+
+REM ---------- Step 2: create venv ----------
+if exist ".venv\Scripts\python.exe" (
+    echo [2/4] .venv already exists, skipping.
+    goto :install_deps
+)
 echo [2/4] Creating virtual environment (.venv)...
-python -m venv .venv
+%PYCMD% -m venv .venv
 if errorlevel 1 goto :venv_failed
+if not exist ".venv\Scripts\python.exe" goto :venv_failed
 echo.
 
 :install_deps
@@ -55,13 +73,18 @@ exit /b 0
 
 :no_python
 echo.
-echo ERROR: Python not found or not working.
-echo If you only see "Python was not found", your 'python' is the
-echo Microsoft Store placeholder. Install real Python first:
+echo ERROR: No working Python found.
 echo.
+echo The 'python' command is likely shadowed by the Microsoft Store
+echo placeholder (it exists but does nothing). Fix it in one of two ways:
+echo.
+echo   Option A (recommended): turn off the fake alias
+echo     Win+R  -^>  ms-settings:appexecutionaliases
+echo     Turn OFF both "python.exe" and "python3.exe"
+echo     Then close this window and run setup.bat again.
+echo.
+echo   Option B: install real Python
 echo     winget install Python.Python.3.12
-echo.
-echo Then close this window and run setup.bat again.
 echo.
 pause
 exit /b 1
@@ -69,6 +92,8 @@ exit /b 1
 :venv_failed
 echo.
 echo ERROR: Failed to create virtual environment.
+echo 'python' may be the Store placeholder. Turn off the alias
+echo (Win+R -^> ms-settings:appexecutionaliases) or run: py -3 -m venv .venv
 echo.
 pause
 exit /b 1
