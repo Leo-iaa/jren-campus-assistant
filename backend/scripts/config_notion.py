@@ -9,11 +9,26 @@
     py -3 backend\\scripts\\config_notion.py
 """
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
 
 BASE_URL = "http://127.0.0.1:8000"
+
+
+def extract_db_id(raw: str) -> str | None:
+    """从用户粘贴的内容里提取 32 位日程数据库 ID。
+
+    支持三种格式：
+    1. 直接 32 位 ID：3c011544057d80fba090e3c1a0de7ad1
+    2. 新版链接：https://app.notion.com/p/3c011544057d80fba090e3c1a0de7ad1?v=...
+    3. 旧版链接：https://www.notion.so/workspace/3c011544057d80fba090e3c1a0de7ad1?v=...
+
+    链接里可能有两串 32 位字符（页面 ID 和视图 ID），取第一串（页面 ID）。
+    """
+    matches = re.findall(r"[0-9a-f]{32}", raw.strip().lower())
+    return matches[0] if matches else None
 
 
 def _api(path: str, method: str = "GET", payload: dict | None = None, timeout: int = 10):
@@ -57,15 +72,20 @@ def main() -> None:
 
     # 2. 输入两串码
     token = input("\n① 请粘贴 Notion 集成令牌（ntn_ 开头的一长串）：\n   > ").strip()
-    db_id = input("② 请粘贴日程数据库 ID（32 位字符，URL 里 ?v= 前那段）：\n   > ").strip()
+    db_raw = input(
+        "② 请粘贴日程数据库 ID（32 位字符），或直接粘贴日程页面链接：\n   > "
+    ).strip()
+    db_id = extract_db_id(db_raw)
     if not token or not db_id:
         print("\n[×] 两串码都不能为空，请重试。")
+        print("    【②怎么找】打开 Notion 日程页面，复制浏览器地址栏整条链接，")
+        print("    粘贴到上面即可（自动提取 32 位 ID）。")
         input("\n按回车退出...")
         sys.exit(1)
     if not token.startswith(("ntn_", "secret_")):
         print("\n[!] 提醒：令牌一般以 ntn_ 或 secret_ 开头，请确认复制的是「集成令牌」。")
-    if len(db_id) != 32:
-        print("\n[!] 提醒：数据库 ID 一般是 32 位字符，请确认复制完整。")
+    if db_raw != db_id:
+        print(f"[✓] 已自动识别数据库 ID：{db_id}")
 
     # 3. 组装配置
     config = json.dumps(
