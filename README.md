@@ -60,7 +60,6 @@
 |----|------|
 | 日程载体 | Notion Calendar（原生 App：事件写入、提醒、三端同步） |
 | AI 载体 | WorkBuddy（腾讯 CodeBuddy：MCP + 定时任务 + 微信/企微/QQ/飞书/钉钉远程；免费额度以官方为准） |
-| 前端（可选） | React + Vite + PWA（已实现，作为备用界面保留） |
 | 后端 | Python FastAPI |
 | MCP | 客户端：Notion 官方 MCP Server / obsidian-mcp-server；服务端：MCP 暴露层（对接 WorkBuddy） |
 | 调度算法 | 遗忘曲线 + 约束规划（自研） |
@@ -90,7 +89,7 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | **Phase 0 · 设计** | 需求、架构、数据库设计 | ✅ 已完成 |
-| **Phase 1 · 核心** | 后端 11 表模型 / CRUD API / 调度算法 / MCP 接入 / 212 例测试；前端三页面（备用） | ✅ 已完成 |
+| **Phase 1 · 核心** | 后端 11 表模型 / CRUD API / 调度算法 / MCP 接入 / 215 例测试 | ✅ 已完成 |
 | **Phase 1.5 · 载体集成** | MCP Server 暴露层 / WorkBuddy 对接 / Notion Calendar 写入 / 21:00 定时任务 | ✅ 已完成 |
 | **Phase 2 · 自适应** | 校准数据回流、提醒完善、云端部署准备 | ⏳ 待启动 |
 | **Phase 3 · 扩展** | 多用户、手机推送、更多数据源 | ⏳ 待定 |
@@ -99,7 +98,6 @@
 
 ```text
 jren-campus-assistant/
-├── frontend/          # React + Vite + TS + PWA（备用界面，非主交互路径）
 ├── backend/           # FastAPI 后端
 │   ├── api/           # 路由层：健康检查 + 基础 CRUD + 数据源同步/OAuth
 │   ├── models/        # SQLAlchemy 数据模型（11 张表）
@@ -160,20 +158,6 @@ python -m pytest
 4. 后端 APScheduler 21:00 自动生成次日计划（WorkBuddy 未触发也能跑，兜底）
 5. 确认计划自动写入 Notion Calendar（时段块事件；08:00 提醒以 WorkBuddy 微信推送为主）
 6. 手机微信远程操控 WorkBuddy，对话式确认 / 调整计划（微信通道双向能力以实测为准）
-
-### 前端（可选）
-
-> 环境要求：Node.js 18+。当前为备用界面，主交互路径走 Notion Calendar + WorkBuddy。
-
-```bash
-cd frontend
-npm install
-npm run dev        # 打开 http://localhost:5173（需后端已启动）
-npm run build      # 生产构建（PWA 可安装）
-npm run test       # 组件与纯函数测试
-```
-
-> 详细说明见 [frontend/README.md](frontend/README.md)。
 
 ## 🛠️ 开发流程约定
 

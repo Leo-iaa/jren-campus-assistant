@@ -9,7 +9,7 @@
 ## 目标用户
 
 - 计划型（J 人）学生：希望一切井井有条，讨厌手动排计划
-- 平台：网页（Web + PWA），安卓手机与电脑浏览器通用
+- 平台：Notion Calendar + WorkBuddy 原生 App（电脑 / 手机 / 平板通用）
 
 ## 核心使用场景
 
@@ -65,7 +65,7 @@
 
 - **日程载体**：Notion Calendar —— 计划写入 Notion 日程数据库，原生 App 三端同步，自带周视图 / 拖拽 / 事件提醒
 - **AI 载体**：WorkBuddy（腾讯 CodeBuddy）—— 支持 MCP（stdio / sse / http）+ 定时任务（自动化功能）+ 微信/企微/QQ/飞书/钉钉远程；免费额度以官方为准
-- **前端 PWA**：已实现的三个页面（今日计划 / 周视图 / 设置）降级为备用界面
+- **前端**：自建前端已移除（2026-08-18）；数据源绑定 / 档位配置改走后端 API 与 WorkBuddy 对话
 - **提醒链路（方案 A）**：WorkBuddy 微信推送为主（21:00 生成提醒 / 08:00 今日计划预览）；Notion Calendar 同步展示事件（Notion API 限制 datetime 事件不能带提醒，见 mcp-server.md 第 7 节）
 - **对话交互**：「确认今天的计划」「把高数作业挪到晚上」→ WorkBuddy 调用后端 MCP 暴露层工具
 

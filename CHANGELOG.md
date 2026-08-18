@@ -14,6 +14,7 @@
 - 数据库设计文档 `docs/database.md`（11 表结构 + DDL + 设计决策，#5）
 - 载体方案切换：Notion Calendar（日程）+ QClaw（AI 交互），README / vision / architecture 同步更新（#16）
 - 提醒通道定稿（方案 A）：QClaw 微信推送为主 + Notion Calendar 提醒双保险（#18）
+- 移除备用前端 frontend/（数据源绑定 / 档位配置改走 API 与 WorkBuddy，#30）
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`
