@@ -21,6 +21,7 @@
 - 新增 `setup.bat` 一键安装脚本；`requirements.txt` 去中文注释（GBK 系统 pip 编码兼容，#38）
 - setup.bat 增强：自动探测 Python（商店别名抢占时回退 `py -3`），实测双路径通过（#40）
 - 脚本防呆：`start_backend.bat` / `setup.bat` 支持无 venv 模式（自动回退 `py -3 --user` 安装）；用户手册全面去命令化（纯双击 + 图形界面，#42）
+- 新增 `config_notion.bat` / `config_notion.py`：Notion 一键配置（只需输入令牌 + 数据库 ID 两串码，自动绑定数据源与日历库，#44）
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`

@@ -93,22 +93,11 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 **③ 把集成连到数据库**
 - 数据库页面 → 右上角 `⋯` → `Connections` → 添加你的集成
 
-**④ 绑定到后端 + 填数据库 ID**
-- 浏览器打开 `http://127.0.0.1:8000/docs` → 找到 `POST /api/data-sources` → **Try it out** → 请求体填：
-
-```json
-{
-  "source_type": "notion",
-  "name": "Notion",
-  "config": "{\"tokens\":{\"access_token\":\"ntn_你的令牌\"}}"
-}
-```
-
-→ 点 **Execute**，返回 `200` 即绑定成功
-
-- 用**记事本**打开 `backend\scripts\start_backend.bat`，找到这一行：
-  `REM set JREN_NOTION_CALENDAR_DB=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
-- 删掉行首的 `REM `，把 `xxxx...` 换成你的**数据库 ID**，保存文件，重启服务
+**④ 一键绑定（只需要两串码）**
+- 双击 `backend\scripts\config_notion.bat`
+- 按提示粘贴两串码：① 集成令牌（`ntn_` 开头）② 日程数据库 ID
+- 看到「绑定成功」即完成 ✅
+- 脚本自动完成：检查服务 → 绑定数据源（已有则自动更新）→ 写入日历数据库 ID，不用再手动操作接口
 
 ### 4.6 WorkBuddy 连接 MCP
 
