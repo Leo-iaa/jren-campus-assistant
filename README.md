@@ -145,6 +145,10 @@ python -m pytest
 
 健康检查：`curl http://127.0.0.1:8000/health` → `{"status":"ok","database":"connected"}`
 
+**Windows 开机自启**（可选）：复制 `backend/scripts/start_backend_hidden.vbs` 到系统启动文件夹
+（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`），登录后服务自动后台启动；
+自查：浏览器开 `http://127.0.0.1:8000/health`。详见 [docs/mcp-server.md](docs/mcp-server.md) 2.1 节。
+
 ### QClaw 集成
 
 > ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，8 个工具），
