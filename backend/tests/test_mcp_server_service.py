@@ -211,6 +211,38 @@ def test_preview_plan_text_empty(db_session):
         assert "今天还没有安排" in text
 
 
+def test_preview_plan_text_notion_fallback(db_session, monkeypatch):
+    """本地无计划时回退读 Notion 日历事件（AI 回答与用户日历一致）。"""
+
+    class FakeWriter:
+        def list_events_on(self, iso: str) -> list[dict]:
+            assert iso == PLAN_DATE.isoformat()
+            return [
+                {"start": f"{iso}T08:00:00+08:00", "end": "", "title": "高等数学", "type": "course"},
+                {"start": f"{iso}T14:00:00+08:00", "end": "", "title": "高数作业", "type": "task"},
+            ]
+
+    import backend.mcp_server.notion_calendar as nc
+
+    monkeypatch.setattr(nc, "build_writer", lambda db: FakeWriter())
+    with db_session() as db:
+        text = preview_plan_text(db, PLAN_DATE)
+    assert "Notion 日历中的安排" in text
+    assert "08:00" in text and "高等数学" in text
+    assert "14:00" in text and "高数作业" in text
+
+
+def test_preview_plan_text_notion_unbound(db_session, monkeypatch):
+    """未绑定 Notion 数据源时回退为空，预览回落"无安排"文案。"""
+
+    import backend.mcp_server.notion_calendar as nc
+
+    monkeypatch.setattr(nc, "build_writer", lambda db: None)
+    with db_session() as db:
+        text = preview_plan_text(db, PLAN_DATE)
+    assert "今天还没有安排" in text
+
+
 def test_preview_plan_text_confirmed(db_session):
     with db_session() as db:
         seed_basic(db)
