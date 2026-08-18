@@ -22,4 +22,8 @@ REM set JREN_NOTION_CALENDAR_DB=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 REM ---- start backend ----
 echo [%date% %time%] starting uvicorn >> "backend\data\server.log" 2>nul
-"backend\.venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 >> "backend\data\server.log" 2>&1
+if exist "backend\.venv\Scripts\python.exe" (
+  "backend\.venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 >> "backend\data\server.log" 2>&1
+) else (
+  py -3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 >> "backend\data\server.log" 2>&1
+)
