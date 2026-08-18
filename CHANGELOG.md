@@ -19,6 +19,7 @@
 - 手册修正：PowerShell / CMD 激活命令区分、Notion 绑定改 Swagger UI 图形界面优先（#34）
 - 手册补充：Python 自检步骤（微软商店占位符 python 会导致 venv 静默创建失败，#36）
 - 新增 `setup.bat` 一键安装脚本；`requirements.txt` 去中文注释（GBK 系统 pip 编码兼容，#38）
+- setup.bat 增强：自动探测 Python（商店别名抢占时回退 `py -3`），实测双路径通过（#40）
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`

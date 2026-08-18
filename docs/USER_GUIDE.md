@@ -73,13 +73,22 @@ python --version
 ```
 
 - ✅ 正常：输出 `Python 3.11.x` 之类的版本号 → 继续下一步
-- ❌ 异常：提示 "Python was not found"、弹出微软商店、或**什么都没输出** → 你的 `python` 是**微软商店占位符**（假的，装样子不干活），`python -m venv` 会"假装成功"但什么都不创建。安装真 Python：
+- ❌ 异常：提示 "Python was not found"、弹出微软商店、或**什么都没输出**。注意——**这不代表你没装 Python**，很可能是**微软商店占位符抢了 `python` 这个名字**（假别名在 PATH 里排在真 Python 前面）。先确认真 Python 在不在：
+
+```powershell
+py -3 --version
+```
+
+  - ✅ 能输出版本号 → 真 Python 装好了，只是名字被抢。**推荐根治**：按 `Win+R` 输入 `ms-settings:appexecutionaliases` 回车，把 `python.exe` 和 `python3.exe` 两个开关**关掉**，然后重开终端，`python --version` 就正常了（之后所有命令照常用 `python`）
+  - ❌ 也没输出 → 确实没装，安装真 Python：
 
 ```powershell
 winget install Python.Python.3.12
 ```
 
 装完**关闭并重新打开终端**，再执行 `python --version` 确认能输出版本号，然后继续。
+
+> 💡 用一键脚本 `setup.bat` 的话可以跳过手动处理——脚本会自动探测：`python` 不干活就自动改用 `py -3`。
 
 **第 1 步：创建并激活虚拟环境**：
 
