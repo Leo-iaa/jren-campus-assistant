@@ -7,6 +7,8 @@
 ![Backend](https://img.shields.io/badge/backend-FastAPI-green)
 ![AI](https://img.shields.io/badge/AI-LLM%20%2B%20MCP-orange)
 
+> 📘 **新手从这里开始**：请先阅读[用户使用手册（docs/USER_GUIDE.md）](docs/USER_GUIDE.md) —— 从克隆到 WorkBuddy 联调的全流程操作指南。
+
 ## 📌 项目定位
 
 每天自动读取你的**课表、Notion 作业、Obsidian 笔记**，结合**艾宾浩斯遗忘曲线**和你自己的学习习惯，自动生成一张**合理且可执行**的时间表 —— 先给你过目确认，再写进日历。
