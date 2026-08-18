@@ -3,9 +3,8 @@
 设计依据 docs/vision.md「提醒链路（方案 A）」：Notion Calendar 事件提醒
 作为 WorkBuddy 微信推送的双保险（电脑关机时云端兜底）。
 
-复用 ``backend/mcp_client/``：
-- 传输层 ``McpClient`` + ``HttpTransport``（backend/mcp_client/transport.py）
-- OAuth token 管理（backend/mcp_client/service.py：过期自动刷新并写回 config）
+传输：REST 直连 api.notion.com（NotionRestClient，Bearer 集成令牌；
+mcp.notion.com 不接受集成令牌，见 Issue #26）。
 - 工具：query_database（查当日已有事件）/ create_page（新建）/ update_page（更新）
 
 幂等策略：按「日期（date 属性过滤当日）+ 标题精确匹配」定位已有事件
@@ -28,14 +27,13 @@ from datetime import date
 import httpx
 from sqlalchemy.orm import Session
 
-from backend.mcp_client.notion import DEFAULT_ENDPOINT
+from backend.mcp_client.notion_rest import NotionRestClient
 from backend.mcp_client.service import (
     _load_config,
     _save_config,
     _token_dict,
     build_oauth_client,
 )
-from backend.mcp_client.transport import HttpTransport, JsonRpcError, McpClient, extract_result_items
 from backend.models import DataSource, PlanItem
 
 #: 默认属性名（Notion 中文界面；可在数据源 config.props 覆盖）
@@ -70,7 +68,7 @@ class NotionCalendarWriter:
 
     def __init__(
         self,
-        client: McpClient,
+        client: NotionRestClient,
         config: dict | None = None,
     ) -> None:
         self._client = client
@@ -98,24 +96,12 @@ class NotionCalendarWriter:
         for item in items:
             page = by_title.get(item.title)
             if page is None:
-                self._call(
-                    "create_page",
-                    {
-                        "parent": {"database_id": self._database_id()},
-                        "properties": self._build_properties(item),
-                    },
-                )
+                self._client.create_page(self._database_id(), self._build_properties(item))
                 created += 1
             elif self._page_matches(page, item):
                 unchanged += 1
             else:
-                self._call(
-                    "update_page",
-                    {
-                        "page_id": page.get("id"),
-                        "properties": self._build_properties(item),
-                    },
-                )
+                self._client.update_page(page.get("id"), self._build_properties(item))
                 updated += 1
 
         return CalendarSyncResult(created=created, updated=updated, unchanged=unchanged)
@@ -133,18 +119,14 @@ class NotionCalendarWriter:
 
     def _find_existing(self, iso: str) -> list[dict]:
         """查询当日已有事件（date 属性过滤，属性名可配置）。"""
-        result = self._call(
-            "query_database",
-            {
-                "database_id": self._database_id(),
-                "page_size": 100,
-                "filter": {
-                    "property": self.props["date"],
-                    "date": {"equals": iso},
-                },
+        return self._client.query_database(
+            self._database_id(),
+            filter={
+                "property": self.props["date"],
+                "date": {"equals": iso},
             },
+            page_size=100,
         )
-        return extract_result_items(result)
 
     def _build_properties(self, item: PlanItem) -> dict:
         """构造 Notion 事件属性：名称 / 日期（起止 + 08:00 提醒）/ 类型。"""
@@ -163,11 +145,20 @@ class NotionCalendarWriter:
         }
 
     def _call(self, tool: str, arguments: dict) -> dict:
-        """调用 Notion MCP 工具，传输错误统一转中文异常。"""
+        """调用 Notion REST（错误统一转中文异常）。
+
+        REST 直连后仅保留工具名到客户端方法的映射，供业务层使用。
+        """
         try:
-            return self._client.call_tool(tool, arguments)
-        except JsonRpcError as exc:
-            raise NotionCalendarError(f"Notion MCP 调用失败（{tool}）：{exc}") from exc
+            if tool == "create_page":
+                return self._client.create_page(arguments["parent"]["database_id"], arguments["properties"])
+            if tool == "update_page":
+                return self._client.update_page(arguments["page_id"], arguments["properties"])
+            if tool == "query_database":
+                return {"results": self._client.query_database(arguments["database_id"], page_size=arguments.get("page_size", 100))}
+            raise NotionCalendarError(f"未知 Notion 调用：{tool}")
+        except NotionRestError as exc:
+            raise NotionCalendarError(f"Notion API 调用失败（{tool}）：{exc}") from exc
 
     # ---------- 幂等比对 ----------
 
@@ -247,7 +238,5 @@ def build_writer(db: Session, http: httpx.Client | None = None) -> NotionCalenda
     # 环境变量兜底值写回 config，writer 统一从 config 取（构造与同步保持一致）
     config["calendar_database_id"] = db_id
 
-    client = McpClient(
-        HttpTransport(config.get("endpoint", DEFAULT_ENDPOINT), access_token=access_token)
-    )
+    client = NotionRestClient(access_token=access_token, http=http)
     return NotionCalendarWriter(client=client, config=config)

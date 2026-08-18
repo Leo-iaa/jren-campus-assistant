@@ -38,6 +38,51 @@ class FakeJsonRpcTransport:
         pass
 
 
+class FakeNotionRest:
+    """按方法返回预设结果的假 Notion REST 客户端，同时记录全部调用。
+
+    与 NotionRestClient 的方法签名一致（query_database / create_page /
+    update_page / search / retrieve_page），测试无需真实账号。
+    """
+
+    def __init__(
+        self,
+        query_results: list[dict] | None = None,
+        create_result: dict | None = None,
+        update_result: dict | None = None,
+    ) -> None:
+        self.query_results = query_results or []
+        self.create_result = create_result or {"id": "new-page"}
+        self.update_result = update_result or {"id": "updated-page"}
+        self.calls: list[tuple[str, dict]] = []
+
+    def _record(self, method: str, **kwargs) -> None:
+        self.calls.append((method, kwargs))
+
+    def query_database(self, database_id: str, filter: dict | None = None, page_size: int = 100) -> list[dict]:
+        self._record("query_database", database_id=database_id, filter=filter, page_size=page_size)
+        return self.query_results
+
+    def create_page(self, parent_database_id: str, properties: dict) -> dict:
+        self._record("create_page", parent_database_id=parent_database_id, properties=properties)
+        return self.create_result
+
+    def update_page(self, page_id: str, properties: dict) -> dict:
+        self._record("update_page", page_id=page_id, properties=properties)
+        return self.update_result
+
+    def search(self, query: str = "", filter: dict | None = None, page_size: int = 10) -> list[dict]:
+        self._record("search", query=query, filter=filter, page_size=page_size)
+        return self.query_results
+
+    def retrieve_page(self, page_id: str) -> dict:
+        self._record("retrieve_page", page_id=page_id)
+        return {"id": page_id, "properties": {}}
+
+    def close(self) -> None:
+        pass
+
+
 # 模拟教务系统导出课表（WakeUpSchedule 风格，见 Issue #11 用户附件样例）：
 # - TZID=Asia/Shanghai + RRULE:FREQ=WEEKLY;UNTIL=...
 # - 同一课程拆多个 VEVENT（教师/教室更换）→ 需去重合并

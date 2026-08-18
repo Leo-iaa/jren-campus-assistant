@@ -21,6 +21,8 @@ build/
 # Data
 data/*
 !data/.gitkeep
+backend/data/*
+!backend/data/.gitkeep
 *.sqlite
 *.sqlite3
 *.db

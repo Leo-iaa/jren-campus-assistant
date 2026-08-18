@@ -71,23 +71,21 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
 
 ## 3. Notion（作业任务 → tasks）
 
-### 3.1 OAuth 授权（授权码 + PKCE，token 存于数据源 config）
+> ⚠️ **接入方式（Issue #26 修正）**：Notion 官方远程 MCP（mcp.notion.com/mcp）
+> 不接受自建集成令牌（一律 401），因此本层改为 **REST 直连 api.notion.com**
+> （`backend/mcp_client/notion_rest.py`，Bearer 集成令牌 + `Notion-Version` 头）。
+> OAuth 端点保留但已非主路径。
+
+### 3.1 绑定（集成令牌，无需 OAuth 流程）
 
 ```bash
-# 1. 发起授权（client_id 也可用环境变量 JREN_NOTION_CLIENT_ID；不传 source_id 会自动新建 notion 数据源）
-curl -X POST http://127.0.0.1:8000/api/data-sources/notion/oauth/start \
+# 在 Notion 创建集成（https://www.notion.so/my-integrations → New integration），
+# 复制令牌（ntn_ 开头），并把集成「连接」到目标数据库（数据库页 ... → Connections）
+curl -X POST http://127.0.0.1:8000/api/data-sources \
   -H 'Content-Type: application/json' \
-  -d '{"client_id": "你的集成ID", "redirect_uri": "http://localhost:5173/oauth/notion/callback"}'
-# → {"source_id": 1, "authorization_url": "https://api.notion.com/v1/oauth/authorize?..."}
-
-# 2. 浏览器打开 authorization_url → 授权 → 回调带 code 和 state
-curl -X POST http://127.0.0.1:8000/api/data-sources/notion/oauth/callback \
-  -H 'Content-Type: application/json' \
-  -d '{"source_id": 1, "code": "...", "state": "..."}'
+  -d '{"source_type": "notion", "name": "Notion",
+       "config": "{\"tokens\": {\"access_token\": \"ntn_你的令牌\"}}"}'
 ```
-
-授权成功后 token 保存在该数据源的 `config.tokens`（access / refresh / expires_at）；
-同步时若 token 过期会自动用 refresh_token 续期并写回。
 
 ### 3.2 同步作业任务
 
@@ -96,7 +94,7 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/notion/oauth/callback \
 curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync
 ```
 
-- 调用官方远程 MCP Server（`https://mcp.notion.com/mcp`，Bearer token）的 `query_database` 工具。
+- 直接调 Notion REST `POST /v1/databases/{id}/query`。
 - 按 `source_ref`（Notion 页面 ID）**幂等 upsert** 到 `tasks`（source='notion'），更新 title / deadline / status。
 - 任务属性名可配置（个人化数据库）：`config.props = {"title": [...], "deadline": [...], "course": [...], "status": [...]}`；
   默认支持中文常用名（标题/截止日期/课程/状态），状态自动归一化到 `todo/doing/done/cancelled`。
@@ -122,8 +120,8 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
 | PATCH | `/api/data-sources/{id}` | 更新（含 enabled / config / last_sync_at） |
 | POST | `/api/data-sources/{id}/enable` / `disable` | 启用 / 禁用（禁用后同步返回 409） |
 | POST | `/api/data-sources/{id}/sync` | 触发同步（iCal 支持 `ics_content` / `mode`） |
-| POST | `/api/data-sources/notion/oauth/start` | Notion 授权起点 |
-| POST | `/api/data-sources/notion/oauth/callback` | Notion 授权回调（兑换 token） |
+| POST | `/api/data-sources/notion/oauth/start` | Notion OAuth 起点（⚠️ 保留但已非主路径，见第 3 节） |
+| POST | `/api/data-sources/notion/oauth/callback` | Notion OAuth 回调（兑换 token） |
 | DELETE | `/api/data-sources/{id}` | 解绑 |
 
 ## 6. 测试（全 mock，无需真实账号/密钥）
