@@ -4,8 +4,8 @@ import { dataSourceApi } from '../api/client'
 import { Card } from '../components/Card'
 
 /**
- * Notion OAuth 回调页：后端约定的默认 redirect_uri 为
- * http://localhost:5173/oauth/notion/callback（本路由）。
+ * Notion OAuth 回调页：应用使用 HashRouter，redirect_uri 为
+ * http://localhost:5173/#/oauth/notion/callback（本路由，code/state 在 hash 的 query 里）。
  * 拿到 code + state 后调用后端 /notion/oauth/callback 兑换 token。
  */
 export function NotionCallbackPage() {
@@ -53,7 +53,7 @@ export function NotionCallbackPage() {
           {message}
         </p>
         <p>
-          <a className="btn btn--primary btn--sm" href="/settings">
+          <a className="btn btn--primary btn--sm" href="#/settings">
             返回设置页
           </a>
         </p>

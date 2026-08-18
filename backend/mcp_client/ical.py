@@ -84,7 +84,7 @@ def _extract_event(comp: icalendar.cal.Component) -> tuple[RawEvent | None, list
     except ValueError:
         return None, [f"跳过全天事件：{summary}"]
     if end <= start:
-        warnings.append(f"时间异常（结束不晚于开始）：{summary}")
+        return None, [f"跳过时间异常事件（结束不晚于开始）：{summary}"]
 
     rrule = comp.get("RRULE")
     if rrule is None:

@@ -1,7 +1,8 @@
 """数据源绑定的请求/响应模型。"""
+import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DataSourceType = Literal["notion", "obsidian", "ical", "caldav"]
 
@@ -26,11 +27,43 @@ class DataSourceUpdate(BaseModel):
     last_sync_at: str | None = None
 
 
+#: 响应中需要打码的敏感配置键（OAuth 令牌 / 密钥等，避免经 API 泄露）
+REDACTED_CONFIG_KEYS = (
+    "tokens",
+    "access_token",
+    "refresh_token",
+    "client_secret",
+    "oauth_state",
+    "oauth_code_verifier",
+    "client_id",
+)
+
+
 class DataSourceRead(DataSourceBase):
     id: int
     created_at: str
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("config", mode="before")
+    @classmethod
+    def _redact_config(cls, v: str | None) -> str | None:
+        """对外返回时打码敏感字段，避免 Notion 令牌 / 密钥经 API 泄露。
+
+        写入（DataSourceCreate/Update）仍接收完整 config；只有读取响应走本校验器。
+        """
+        if not v:
+            return v
+        try:
+            cfg = json.loads(v) if isinstance(v, str) else dict(v)
+        except (TypeError, ValueError):
+            return v
+        if not isinstance(cfg, dict):
+            return v
+        for key in REDACTED_CONFIG_KEYS:
+            if key in cfg:
+                cfg[key] = "***"
+        return json.dumps(cfg, ensure_ascii=False)
 
 
 # ---------- 同步 ----------

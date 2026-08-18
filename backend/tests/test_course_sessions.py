@@ -47,6 +47,28 @@ def test_session_time_format_422(client):
     assert resp.status_code == 422
 
 
+def test_session_end_before_start_422(client):
+    """结束时间不晚于开始时间 → 422（此前会被接受入库，导致规划器崩溃）。"""
+    cid = _make_course(client)
+    resp = client.post(
+        f"/api/courses/{cid}/sessions",
+        json={"day_of_week": 0, "start_time": "10:00", "end_time": "09:00"},
+    )
+    assert resp.status_code == 422
+    # 等值也非法
+    resp2 = client.post(
+        f"/api/courses/{cid}/sessions",
+        json={"day_of_week": 0, "start_time": "10:00", "end_time": "10:00"},
+    )
+    assert resp2.status_code == 422
+    # 更新路径同样校验
+    sid = client.post(
+        f"/api/courses/{cid}/sessions",
+        json={"day_of_week": 0, "start_time": "10:00", "end_time": "11:00"},
+    ).json()["id"]
+    assert client.patch(f"/api/course-sessions/{sid}", json={"end_time": "09:30"}).status_code == 422
+
+
 def test_session_day_of_week_out_of_range_422(client):
     cid = _make_course(client)
     resp = client.post(

@@ -4,9 +4,8 @@
 """
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 
-from backend.models.base import Base
+from backend.models.base import Base, shanghai_now
 
 
 class KnowledgePoint(Base):
@@ -30,7 +29,7 @@ class KnowledgePoint(Base):
         String, nullable=False, default="active", server_default="active"
     )
     created_at: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=func.datetime("now")
+        Text, nullable=False, default=shanghai_now
     )
 
     course: Mapped["Course"] = relationship(back_populates="knowledge_points")

@@ -4,9 +4,8 @@
 """
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 
-from backend.models.base import Base
+from backend.models.base import Base, shanghai_now
 
 # 课程档位（产品决策：S/A/B/C，见 docs/vision.md）
 COURSE_TIERS = ("S", "A", "B", "C")
@@ -28,7 +27,7 @@ class Course(Base):
     teacher: Mapped[str | None] = mapped_column(String)
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=func.datetime("now")
+        Text, nullable=False, default=shanghai_now
     )
 
     # 关系：删除课程 → 级联删除时间块 / 知识点（复习计划随知识点级联）

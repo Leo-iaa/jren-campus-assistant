@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { toDateStr } from '../lib/date'
 import { WeekGrid } from './WeekGrid'
 
 const days = [
@@ -29,11 +30,9 @@ describe('WeekGrid 组件', () => {
   })
 
   it('今天所在列高亮标注「今天」', () => {
-    // 以当天日期构造：保证 isToday 命中
-    const now = new Date()
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const todayDays = days.map((d, i) => (i === 0 ? { ...d, date: today } : d))
-    const { container } = render(<WeekGrid days={todayDays} />)
+    // 只渲染「今天」单列：避免原用例用固定日期撞上真实今天导致出现两个「今天」
+    const today = toDateStr(new Date())
+    const { container } = render(<WeekGrid days={[{ ...days[0], date: today }]} />)
     expect(container.querySelector('.weekgrid__day--today')).not.toBeNull()
     expect(screen.getByText('今天')).toBeInTheDocument()
   })

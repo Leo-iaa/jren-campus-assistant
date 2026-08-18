@@ -54,6 +54,23 @@
 - Notion 接入改 REST 直连（#26）：mcp.notion.com 不接受自建集成令牌（官方确认，一律 401），NotionAdapter / NotionCalendarWriter 从 MCP 传输改为直连 api.notion.com（新增 `mcp_client/notion_rest.py`，Bearer 集成令牌 + Notion-Version）；幂等写入与属性映射逻辑不变；测试 fake 传输层改 FakeNotionRest；docs/mcp-client.md 接入方式更新（OAuth 端点保留但非主路径）
 - Notion 日历写入适配（#26 补充）：Notion API 限制 reminder 只能用于不含时间的 date 属性，datetime 事件不允许带提醒——写入改为**不带 reminder**（事件保留起止时间，日历显示时段块），08:00 提醒职责由 WorkBuddy 微信推送承担；文档（README / mcp-server / vision）提醒链路描述同步更新
 
+### Fixed
+
+- **安全**：数据源 `config` 中的敏感字段（Notion `tokens` / `client_secret` / `client_id` / OAuth `state` / `code_verifier`）在 API 响应中打码为 `***`，不再经 `/api/data-sources` 明文泄露
+- **校验**：课程时间块 `end_time <= start_time` 在创建 / 更新时返回 422（此前会被接受入库，导致规划器崩溃）
+- **iCal 解析**：结束不晚于开始的事件直接跳过并告警（此前仅告警仍入库）
+- **时区一致**：`created_at` 默认值由 SQLite UTC（`datetime('now')`）改为 Asia/Shanghai，与 `confirmed_at` / `completed_at` / `last_sync_at` 对齐，消除 +8 小时偏差
+- **启动健壮性**：应用 lifespan 自动确保 SQLite 目录存在并建表（幂等），未先执行 `init_db` 也能正常启动
+- **Notion 日历幂等**：写入键由「标题」改为「标题 + 开始时间」，同日同名但不同时段的事件不再互相覆盖 / 错位更新
+- **Notion 同步**：捕获 REST 传输异常（`NotionRestError`）返回可读错误；`deadline` 统一规范为 `YYYY-MM-DD`（兼容 Notion 的 ISO 时间串）
+- **计划生成**：任务 / 复习 / 杂项时长越界时 clamp 到安全上限（防止 `time()` 溢出导致 500）
+- **前端 · 定时杂项被丢弃**：带 `preferred_time` 的杂项不再被静默丢弃，进入时间轴并计入空闲时段占用
+- **前端 · 打包算法**：灵活项改为 first-fit 扫描全部空闲块（此前逐块跳过，小块堵塞时误入 overflow）
+- **前端 · 复习上限**：每日复习上限生效，超出部分进入 overflow 并标注「顺延处理」；设置页文案与实际行为对齐
+- **前端 · OAuth 回调**：修复 HashRouter 下 `redirect_uri` 不带 `#/` 导致回调路由不挂载、`code/state` 丢失的问题
+- **前端 · 状态**：今日 / 周视图 `loading` 与 `error` 对齐（含知识点与时间块请求）；拖拽保存副作用移出 `setState` updater
+- **测试**：修复 `WeekGrid.test.tsx` 依赖真实日期的脆弱用例（8 月 18 日必挂）；新增定时杂项 / 复习上限 / first-fit / 时间校验 / 打码 / 幂等键等用例
+
 [#1]: https://github.com/Leo-iaa/jren-campus-assistant/issues/1
 [#7]: https://github.com/Leo-iaa/jren-campus-assistant/issues/7
 [#9]: https://github.com/Leo-iaa/jren-campus-assistant/issues/9

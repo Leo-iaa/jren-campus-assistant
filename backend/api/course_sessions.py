@@ -1,5 +1,5 @@
 """课程时间块 CRUD（嵌套在课程下创建/列表，扁平化单条操作）。"""
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from backend.api.deps import apply_updates, get_db, get_or_404
@@ -39,6 +39,10 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
 def update_session(session_id: int, payload: CourseSessionUpdate, db: Session = Depends(get_db)):
     session = get_or_404(db, CourseSession, session_id)
     apply_updates(session, payload.model_dump(exclude_unset=True))
+    # PATCH 可能只传一端，schema 无法跨字段校验已有值 → 在此对合并后时间做校验
+    if session.end_time <= session.start_time:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="结束时间必须晚于开始时间")
     db.commit()
     db.refresh(session)
     return session

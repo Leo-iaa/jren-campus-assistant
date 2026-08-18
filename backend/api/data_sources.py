@@ -154,7 +154,7 @@ def notion_oauth_start(payload: OAuthStartRequest | None = None, db: Session = D
     redirect_uri = (
         (payload.redirect_uri if payload else None)
         or config.get("redirect_uri")
-        or "http://localhost:5173/oauth/notion/callback"
+        or "http://localhost:5173/#/oauth/notion/callback"
     )
     if not client_id:
         db.rollback()

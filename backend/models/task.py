@@ -4,9 +4,8 @@
 """
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 
-from backend.models.base import Base
+from backend.models.base import Base, shanghai_now
 
 
 class Task(Base):
@@ -34,7 +33,7 @@ class Task(Base):
         String, nullable=False, default="todo", server_default="todo"
     )
     created_at: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=func.datetime("now")
+        Text, nullable=False, default=shanghai_now
     )
 
     course: Mapped["Course | None"] = relationship(back_populates="tasks")
@@ -60,7 +59,7 @@ class MiscItem(Base):
         String, nullable=False, default="todo", server_default="todo"
     )
     created_at: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=func.datetime("now")
+        Text, nullable=False, default=shanghai_now
     )
 
     def __repr__(self) -> str:

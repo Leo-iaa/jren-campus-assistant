@@ -1,7 +1,7 @@
 """课程与课程时间块的请求/响应模型。"""
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # 时间与日期格式（数据库存 TEXT，ISO 风格）
 TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"  # 'HH:MM'
@@ -52,6 +52,12 @@ class CourseSessionBase(BaseModel):
     location: str | None = None
     release_slot: int = Field(default=0, ge=0, le=1, description="B/C 档：该时段是否释放（0/1）")
 
+    @model_validator(mode="after")
+    def _check_time_range(self):
+        if self.end_time <= self.start_time:
+            raise ValueError("结束时间必须晚于开始时间")
+        return self
+
 
 class CourseSessionCreate(CourseSessionBase):
     pass
@@ -63,6 +69,12 @@ class CourseSessionUpdate(BaseModel):
     end_time: str | None = Field(default=None, pattern=TIME_PATTERN)
     location: str | None = None
     release_slot: int | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _check_time_range(self):
+        if self.start_time and self.end_time and self.end_time <= self.start_time:
+            raise ValueError("结束时间必须晚于开始时间")
+        return self
 
 
 class CourseSessionRead(CourseSessionBase):

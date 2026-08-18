@@ -12,6 +12,7 @@ APScheduler 21:00 定时任务同样在 lifespan 中按配置启停。
 """
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,7 @@ from starlette.routing import Route
 from backend.api import api_router
 from backend.api.health import router as health_router
 from backend.config import settings
+from backend.database import init_db
 from backend.mcp_server.scheduler_jobs import start_scheduler_if_enabled, stop_scheduler
 from backend.mcp_server.server import build_mcp_server
 
@@ -40,6 +42,14 @@ def create_app(db_factory: Callable[[], Session] | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # 生产模式（未注入测试 db_factory）确保 SQLite 目录存在并建表，避免
+        # 未先执行 init_db 时首个请求 500；create_all 幂等，重复启动无副作用
+        if db_factory is None:
+            db_url = settings.database_url
+            if db_url.startswith("sqlite:///") and not db_url.endswith(":memory:"):
+                db_path = Path(db_url.removeprefix("sqlite:///"))
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+            init_db()
         # MCP 会话管理器必须在请求前启动（内嵌 ASGI 应用无自己的 lifespan）
         async with mcp_server.session_manager.run():
             start_scheduler_if_enabled()

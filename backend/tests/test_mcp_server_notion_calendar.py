@@ -116,6 +116,21 @@ def test_sync_updates_when_time_changed(db_session):
         assert updates[0]["properties"]["日期"]["date"]["start"] == "2026-08-19T19:00:00+08:00"
 
 
+def test_sync_same_title_different_time_creates_both(db_session):
+    """同日同名但不同时段的事件各自建页（此前仅按标题匹配会互相覆盖 / 错位）。"""
+    with db_session() as db:
+        add_plan_item(db, "高数作业", "10:00", "11:00", "task")
+        add_plan_item(db, "高数作业", "19:00", "20:00", "task")
+        fake = fake_rest()
+        result = writer_with(fake).sync_plan_to_calendar(db, PLAN_DATE)
+
+        assert result.created == 2 and result.updated == 0 and result.unchanged == 0
+        creates = rest_calls(fake, "create_page")
+        assert len(creates) == 2
+        starts = {c["properties"]["日期"]["date"]["start"] for c in creates}
+        assert starts == {"2026-08-19T10:00:00+08:00", "2026-08-19T19:00:00+08:00"}
+
+
 def test_sync_skips_when_no_plan_items(db_session):
     with db_session() as db:
         fake = FakeNotionRest()

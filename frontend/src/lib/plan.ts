@@ -34,6 +34,8 @@ export interface BuildTimelineInput {
   studyEnd?: string
   /** 最短自由时间展示阈值（分钟，默认 30） */
   minFreeMinutes?: number
+  /** 每日复习上限（超出部分放入 overflow 并标注顺延；默认不限） */
+  reviewDailyCap?: number
 }
 
 export interface BuildTimelineResult {
@@ -65,7 +67,8 @@ function toBlock(item: PlanTimelineItem): TimeBlock {
 /** 任务是否应出现在今日计划中（今天到期 或 进行中） */
 export function taskDueToday(task: Task, date: string): boolean {
   if (task.status === 'done' || task.status === 'cancelled') return false
-  if (task.deadline === date) return true
+  // deadline 可能是 'YYYY-MM-DD' 或 Notion 同步的 'YYYY-MM-DDTHH:MM'，统一比较日期部分
+  if (task.deadline?.slice(0, 10) === date) return true
   if (task.status === 'doing') return true
   return false
 }
@@ -78,9 +81,10 @@ export function reviewDueToday(review: ReviewSchedule, date: string): boolean {
 
 /**
  * 前端简易规划器：
- * 1. 固定项：当日课程 / 当日复习 / 带时间的杂项 → 占位
+ * 1. 固定项：当日课程 / 当日复习 / 带时间的杂项 → 占位（课程与定时杂项占用时间）
  * 2. 空闲块 = 学习时段减去固定项占用
- * 3. 灵活项：到期/进行中任务、无时间杂项 → 按预估时长填入最早空闲块
+ * 3. 灵活项：到期/进行中任务、复习（受每日上限约束）、无时间杂项 →
+ *    first-fit 填入第一个能放下的空闲块；放不下进入 overflow
  * 4. 生成自由时间条目（≥ minFreeMinutes），返回排序后的时间轴
  */
 export function buildTimeline(input: BuildTimelineInput): BuildTimelineResult {
@@ -96,6 +100,7 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineResult {
     studyStart = '08:00',
     studyEnd = '22:00',
     minFreeMinutes = 30,
+    reviewDailyCap,
   } = input
 
   const courseById = new Map(courses.map((c) => [c.id, c]))
@@ -163,14 +168,21 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineResult {
     }
   }
 
-  // 2. 空闲块
-  const busy = fixed.filter((f) => f.type === 'course').map(toBlock)
+  // 2. 空闲块：课程 + 带时间的杂项都占用时段（复习无固定时刻不占位）
+  const busy = fixed.filter((f) => f.start_time && f.end_time).map(toBlock)
   const freeBlocks = subtractBlocks(
     { start: timeToMinutes(studyStart), end: timeToMinutes(studyEnd) },
     busy,
   )
 
-  // 3. 灵活项：到期/进行中任务（deadline 压力优先）→ 复习 → 无时间杂项
+  // 3. 灵活项：到期/进行中任务（deadline 压力优先）→ 复习（受每日上限约束）→ 无时间杂项
+  const dueReviews = fixed.filter((f) => f.type === 'review')
+  const cap = reviewDailyCap && reviewDailyCap > 0 ? reviewDailyCap : Number.POSITIVE_INFINITY
+  const cappedReviews = dueReviews.slice(0, cap)
+  const deferredReviews = dueReviews
+    .slice(cap)
+    .map((r) => ({ ...r, subtitle: '超出每日复习上限，顺延处理' }))
+
   const flexible: PlanTimelineItem[] = [
     ...tasks.filter((t) => taskDueToday(t, date)).map((t) => ({
       key: `task:${t.id}`,
@@ -184,7 +196,7 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineResult {
       ref_id: t.id,
       status: t.status,
     })),
-    ...fixed.filter((f) => f.type === 'review'),
+    ...cappedReviews,
     ...miscItems
       .filter((m) => m.status !== 'done' && m.status !== 'cancelled' && !m.preferred_time)
       .map((m) => ({
@@ -198,9 +210,8 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineResult {
       })),
   ]
 
-  const overflow: PlanTimelineItem[] = []
+  const overflow: PlanTimelineItem[] = [...deferredReviews]
   const scheduled: PlanTimelineItem[] = []
-  let freeIndex = 0
 
   for (const item of flexible) {
     const dur =
@@ -211,28 +222,23 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineResult {
           ? 25
           : (miscItems.find((m) => m.id === item.ref_id)?.duration_minutes ??
             DEFAULT_MISC_MINUTES)
-    const slot = freeBlocks[freeIndex]
-    if (slot && slot.end - slot.start >= dur) {
-      item.start_time = formatStart(slot.start)
-      item.end_time = formatEnd(item.start_time, dur)
-      slot.start += dur
-      scheduled.push(item)
-    } else {
-      freeIndex += 1
-      const next = freeBlocks[freeIndex]
-      if (next && next.end - next.start >= dur) {
-        item.start_time = formatStart(next.start)
-        item.end_time = formatEnd(item.start_time, dur)
-        next.start += dur
-        scheduled.push(item)
-      } else {
-        overflow.push(item)
-      }
+    // first-fit：从头扫描全部剩余空闲块，取第一个能放下的（比逐块跳过更优）
+    const idx = freeBlocks.findIndex((b) => b.end - b.start >= dur)
+    if (idx === -1) {
+      overflow.push(item)
+      continue
     }
+    const slot = freeBlocks[idx]
+    item.start_time = formatStart(slot.start)
+    item.end_time = formatEnd(item.start_time, dur)
+    slot.start += dur
+    if (slot.end - slot.start === 0) freeBlocks.splice(idx, 1)
+    scheduled.push(item)
   }
 
   // 4. 生成自由时间条目 + 排序
-  const timeline = [...scheduled, ...fixed.filter((f) => f.type === 'course')].sort(
+  // 固定项（课程 + 带时间的杂项）进入时间轴；复习通过 scheduled 进入
+  const timeline = [...scheduled, ...fixed.filter((f) => f.start_time)].sort(
     (a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
   )
 
@@ -262,7 +268,7 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineResult {
       courseCount: timeline.filter((t) => t.type === 'course').length,
       taskCount: scheduled.filter((t) => t.type === 'task').length,
       reviewCount: scheduled.filter((t) => t.type === 'review').length,
-      miscCount: scheduled.filter((t) => t.type === 'misc').length,
+      miscCount: timeline.filter((t) => t.type === 'misc').length,
       freeMinutes,
     },
     overflow,

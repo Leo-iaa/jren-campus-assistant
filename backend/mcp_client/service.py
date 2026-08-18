@@ -22,6 +22,7 @@ from backend.models import Course, CourseSession, DataSource, Task
 from backend.mcp_client.ical import IcalAdapter
 from backend.mcp_client.models import CourseSessionItem, NoteItem, SyncResult, TaskItem
 from backend.mcp_client.notion import NotionAdapter
+from backend.mcp_client.notion_rest import NotionRestError
 from backend.mcp_client.oauth import DEFAULT_AUTH_URL, DEFAULT_TOKEN_URL, OAuthClient, OAuthConfig, OAuthToken
 from backend.mcp_client.obsidian import ObsidianAdapter
 from backend.mcp_client.transport import JsonRpcError
@@ -63,6 +64,16 @@ def _token_dict(token: OAuthToken) -> dict:
     }
 
 
+def _normalize_deadline(value: str | None) -> str | None:
+    """Notion 日期可能带时刻（ISO 时间串），落库统一为 'YYYY-MM-DD'。
+
+    否则与 tasks.deadline 的 DATE_PATTERN 约定不一致，前端「今天到期」的精确匹配会失效。
+    """
+    if not value:
+        return None
+    return value[:10] if len(value) >= 10 else value
+
+
 def build_oauth_client(config: dict, http: httpx.Client | None = None) -> OAuthClient:
     """按 config / 环境变量构造 OAuth 客户端（client_id 必须可解析）。"""
     client_id = config.get("client_id") or os.environ.get("JREN_NOTION_CLIENT_ID", "")
@@ -73,7 +84,7 @@ def build_oauth_client(config: dict, http: httpx.Client | None = None) -> OAuthC
             client_id=client_id,
             client_secret=config.get("client_secret") or os.environ.get("JREN_NOTION_CLIENT_SECRET"),
             redirect_uri=config.get("redirect_uri")
-            or os.environ.get("JREN_NOTION_REDIRECT_URI", "http://localhost:5173/oauth/notion/callback"),
+            or os.environ.get("JREN_NOTION_REDIRECT_URI", "http://localhost:5173/#/oauth/notion/callback"),
             auth_url=config.get("auth_url", DEFAULT_AUTH_URL),
             token_url=config.get("token_url", DEFAULT_TOKEN_URL),
         ),
@@ -217,6 +228,8 @@ def _sync_notion(db, source: DataSource, database_id: str | None = None, max_pag
         raise SyncError(str(exc)) from exc
     except JsonRpcError as exc:
         raise SyncError(f"Notion MCP 调用失败：{exc}") from exc
+    except NotionRestError as exc:
+        raise SyncError(f"Notion API 调用失败：{exc}") from exc
     finally:
         adapter.close()
 
@@ -233,7 +246,7 @@ def _sync_notion(db, source: DataSource, database_id: str | None = None, max_pag
                 Task(
                     title=item.title,
                     description=item.description,
-                    deadline=item.deadline,
+                    deadline=_normalize_deadline(item.deadline),
                     course_id=course.id if course else None,
                     source="notion",
                     source_ref=item.source_ref,
@@ -247,7 +260,7 @@ def _sync_notion(db, source: DataSource, database_id: str | None = None, max_pag
             if item.description is not None:
                 task.description = item.description
             if item.deadline is not None:
-                task.deadline = item.deadline
+                task.deadline = _normalize_deadline(item.deadline)
             course = _match_course(db, item.course_name)
             task.course_id = course.id if course else task.course_id
             updated += 1

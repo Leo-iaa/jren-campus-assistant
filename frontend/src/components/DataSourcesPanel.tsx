@@ -79,8 +79,10 @@ export function DataSourcesPanel() {
   /** Notion OAuth：获取授权 URL 并打开新窗口 */
   const startNotionOauth = async () => {
     try {
+      // 应用使用 HashRouter，redirect_uri 必须带 #/ 前缀，否则 Notion 回跳后
+      // code/state 落在路径而非 hash，回调路由不挂载导致授权失败
       const r = await dataSourceApi.notionOauthStart({
-        redirect_uri: `${window.location.origin}/oauth/notion/callback`,
+        redirect_uri: `${window.location.origin}/#/oauth/notion/callback`,
       })
       // 回调页通过 localStorage 取 source_id 完成 token 兑换
       localStorage.setItem('jren:notion:source_id', String(r.source_id))
