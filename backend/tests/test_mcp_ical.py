@@ -74,3 +74,29 @@ def test_parse_ignores_valarm_and_calendar_meta():
     """VALARM / VTIMEZONE 等非 VEVENT 组件不影响解析。"""
     items, _ = parse_ics(SAMPLE_ICS)
     assert all(isinstance(item.course_name, str) for item in items)
+
+
+def test_parse_skips_bad_time_event():
+    """结束不晚于开始的事件被跳过并告警（此前仅告警仍入库，会让规划器崩溃）。"""
+    ics = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//EN
+BEGIN:VEVENT
+UID:bad-1
+SUMMARY:异常课
+DTSTART;TZID=Asia/Shanghai:20260302T100000
+DTEND;TZID=Asia/Shanghai:20260302T090000
+RRULE:FREQ=WEEKLY;UNTIL=20260621T160000Z;INTERVAL=1
+END:VEVENT
+BEGIN:VEVENT
+UID:good-1
+SUMMARY:正常课
+DTSTART;TZID=Asia/Shanghai:20260303T140000
+DTEND;TZID=Asia/Shanghai:20260303T154000
+RRULE:FREQ=WEEKLY;UNTIL=20260620T160000Z;INTERVAL=1
+END:VEVENT
+END:VCALENDAR
+"""
+    items, warnings = parse_ics(ics)
+    assert [item.course_name for item in items] == ["正常课"]
+    assert any("时间异常" in w for w in warnings)

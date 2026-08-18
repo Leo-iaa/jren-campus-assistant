@@ -59,6 +59,9 @@ _AFTERNOON_END = time(18, 0)
 DEFAULT_TASK_MINUTES = 60
 DEFAULT_REVIEW_MINUTES = 30
 
+#: 单条目时长上限（分钟）：超过视为异常，clamp 以免 time() 溢出（hour>23）崩溃
+MAX_DURATION_MINUTES = 720
+
 
 # ---------- 结果数据结构 ----------
 
@@ -182,7 +185,7 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
     for t in pending_tasks:
         if t.deadline and (t.deadline[:10] < iso):
             continue  # 已过期的任务不自动排（用户另行处理）
-        minutes = t.estimated_minutes or task_minutes
+        minutes = _clamp_duration(t.estimated_minutes, task_minutes)
         task_drafts.append(
             PlanItemDraft(
                 date=plan_date,
@@ -211,7 +214,7 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
             PlanItemDraft(
                 date=plan_date,
                 start=time(0, 0),
-                end=_minutes_to_time(review_minutes),
+                end=_minutes_to_time(_clamp_duration(review_minutes, review_minutes)),
                 item_type="review",
                 ref_id=rs.id,
                 title=f"复习 · {kp.title if kp else f'知识点#{rs.knowledge_point_id}'}",
@@ -224,8 +227,8 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
     for m in (
         db.query(MiscItem).filter(MiscItem.status == "todo").order_by(MiscItem.id).all()
     ):
-        minutes = m.duration_minutes
-        if not minutes or minutes <= 0:
+        minutes = _clamp_duration(m.duration_minutes, 0)
+        if minutes == 0:
             skipped.append(f"杂项「{m.title}」缺少有效时长（duration_minutes），跳过")
             continue
         misc_drafts.append(
@@ -308,7 +311,17 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
 
 
 def _minutes_to_time(minutes: int) -> time:
+    """分钟数 → time（越界抛中文错误，防御来自配置 / 数据的异常时长）。"""
+    if minutes < 0 or minutes >= 1440:
+        raise ValueError(f"时长超出合理范围（0-1439 分钟）：{minutes}")
     return time(minutes // 60, minutes % 60)
+
+
+def _clamp_duration(minutes: int | None, default: int) -> int:
+    """规范化任务 / 复习时长：缺失或非法用默认值；超大值 clamp 到上限。"""
+    if not minutes or minutes <= 0:
+        return default
+    return min(minutes, MAX_DURATION_MINUTES)
 
 
 def _parse_study_hours(value: str) -> tuple[time, time] | None:

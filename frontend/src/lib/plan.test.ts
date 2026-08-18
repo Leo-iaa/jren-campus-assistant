@@ -9,6 +9,7 @@ import {
 import {
   makeCourse,
   makeKp,
+  makeMisc,
   makeReview,
   makeSession,
   makeTask,
@@ -128,6 +129,68 @@ describe('buildTimeline 时间轴聚合', () => {
     )
     const course = result.timeline.find((t) => t.type === 'course')
     expect(course?.tier).toBe('C')
+  })
+
+  it('带时间的杂项进入时间轴并占用空闲时段', () => {
+    const result = buildTimeline(
+      baseInput({
+        sessions: [makeSession({ start_time: '08:00', end_time: '09:00' })],
+        miscItems: [
+          makeMisc({ id: 1, title: '取快递', preferred_time: '10:00', duration_minutes: 30 }),
+        ],
+        studyStart: '08:00',
+        studyEnd: '12:00',
+      }),
+    )
+    const misc = result.timeline.find((t) => t.type === 'misc' && t.title === '取快递')
+    expect(misc).toBeDefined()
+    expect(misc?.start_time).toBe('10:00')
+    expect(misc?.end_time).toBe('10:30')
+    expect(result.stats.miscCount).toBe(1)
+    // 定时杂项占用空闲：课程 08:00-09:00 + 杂项 10:00-10:30，剩余自由时间不含该段
+    const free = result.timeline.filter((t) => t.type === 'free')
+    expect(free.some((f) => f.start_time === '10:00')).toBe(false)
+  })
+
+  it('超出每日复习上限的复习点进入 overflow 并标注顺延', () => {
+    const result = buildTimeline(
+      baseInput({
+        reviews: [
+          makeReview({ id: 1, knowledge_point_id: 1 }),
+          makeReview({ id: 2, knowledge_point_id: 2 }),
+          makeReview({ id: 3, knowledge_point_id: 3 }),
+        ],
+        knowledgePoints: [
+          makeKp({ id: 1, title: '知识点A' }),
+          makeKp({ id: 2, title: '知识点B' }),
+          makeKp({ id: 3, title: '知识点C' }),
+        ],
+        reviewDailyCap: 2,
+      }),
+    )
+    expect(result.stats.reviewCount).toBe(2)
+    const deferred = result.overflow.filter((t) => t.type === 'review')
+    expect(deferred).toHaveLength(1)
+    expect(deferred[0].subtitle).toContain('顺延')
+  })
+
+  it('first-fit：任务可跳过多个小块落入后续大块（此前会误入 overflow）', () => {
+    const result = buildTimeline(
+      baseInput({
+        sessions: [
+          makeSession({ id: 1, start_time: '08:00', end_time: '09:00' }),
+          makeSession({ id: 2, start_time: '09:30', end_time: '10:00' }),
+          makeSession({ id: 3, start_time: '10:30', end_time: '11:00' }),
+        ],
+        tasks: [makeTask({ id: 1, title: '45 分钟作业', estimated_minutes: 45 })],
+        studyStart: '08:00',
+        studyEnd: '12:00',
+      }),
+    )
+    const task = result.timeline.find((t) => t.type === 'task')
+    expect(task).toBeDefined()
+    expect(task?.start_time).toBe('11:00')
+    expect(result.overflow).toHaveLength(0)
   })
 })
 

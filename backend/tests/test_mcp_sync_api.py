@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 from backend.mcp_client.models import CourseSessionItem, NoteItem, TaskItem
 from backend.mcp_client.oauth import OAuthToken
+from backend.models import DataSource
 from tests.fakes import SAMPLE_ICS
 
 
@@ -182,7 +183,7 @@ def test_notion_sync_requires_auth(client):
     assert resp.status_code == 401
 
 
-def test_notion_sync_refreshes_expired_token(client, monkeypatch):
+def test_notion_sync_refreshes_expired_token(client, db_session, monkeypatch):
     expired = {"access_token": "old", "refresh_token": "rt", "expires_at": time.time() - 100}
     source = _create_source(client, "notion", {"database_id": "db1", "tokens": expired})
 
@@ -208,8 +209,14 @@ def test_notion_sync_refreshes_expired_token(client, monkeypatch):
     assert resp.status_code == 200
     assert captured["token"] == "new-token"  # 用的是刷新后的 token
 
-    cfg = json.loads(client.get(f"/api/data-sources/{source['id']}").json()["config"])
-    assert cfg["tokens"]["access_token"] == "new-token"  # 新 token 已写回 config
+    # API 响应已打码，不会泄露令牌
+    api_cfg = json.loads(client.get(f"/api/data-sources/{source['id']}").json()["config"])
+    assert api_cfg["tokens"] == "***"
+    # 实际新 token 已写回数据库 config（安全读取走 DB，不走 API）
+    with db_session() as db:
+        row = db.query(DataSource).filter(DataSource.id == source["id"]).one()
+        db_cfg = json.loads(row.config)
+        assert db_cfg["tokens"]["access_token"] == "new-token"
 
 
 def test_notion_sync_missing_database_id_400(client, monkeypatch):
@@ -244,10 +251,10 @@ def test_obsidian_sync_queries_and_records_time(client, monkeypatch):
 # ---------- Notion OAuth ----------
 
 
-def test_oauth_start_generates_url_and_persists_state(client):
+def test_oauth_start_generates_url_and_persists_state(client, db_session):
     resp = client.post(
         "/api/data-sources/notion/oauth/start",
-        json={"client_id": "cid-1", "redirect_uri": "http://localhost:5173/oauth/notion/callback"},
+        json={"client_id": "cid-1", "redirect_uri": "http://localhost:5173/#/oauth/notion/callback"},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -256,10 +263,17 @@ def test_oauth_start_generates_url_and_persists_state(client):
 
     source = client.get(f"/api/data-sources/{body['source_id']}").json()
     assert source["source_type"] == "notion"
-    config = json.loads(source["config"])
-    assert config["client_id"] == "cid-1"
-    assert config["oauth_state"]
-    assert config["oauth_code_verifier"]
+    # 敏感配置经 API 打码
+    api_cfg = json.loads(source["config"])
+    assert api_cfg["client_id"] == "***"
+    assert api_cfg["oauth_state"] == "***"
+    # 真实 state / code_verifier 落库（回调校验从 DB 读取）
+    with db_session() as db:
+        row = db.query(DataSource).filter(DataSource.id == body["source_id"]).one()
+        db_cfg = json.loads(row.config)
+        assert db_cfg["client_id"] == "cid-1"
+        assert db_cfg["oauth_state"]
+        assert db_cfg["oauth_code_verifier"]
 
 
 def test_oauth_start_with_existing_source(client):
@@ -285,12 +299,15 @@ def test_oauth_start_without_client_id_400(client):
     assert client.get("/api/data-sources").json() == []  # 失败不留脏数据
 
 
-def test_oauth_callback_exchanges_and_stores_token(client, monkeypatch):
+def test_oauth_callback_exchanges_and_stores_token(client, db_session, monkeypatch):
     start = client.post(
         "/api/data-sources/notion/oauth/start", json={"client_id": "cid"}
     ).json()
     sid = start["source_id"]
-    state = json.loads(client.get(f"/api/data-sources/{sid}").json()["config"])["oauth_state"]
+    # state 从数据库读取（API 响应已打码）
+    with db_session() as db:
+        row = db.query(DataSource).filter(DataSource.id == sid).one()
+        state = json.loads(row.config)["oauth_state"]
 
     fake_oauth = MagicMock()
     fake_oauth.exchange_code.return_value = OAuthToken(
@@ -305,10 +322,16 @@ def test_oauth_callback_exchanges_and_stores_token(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
 
-    config = json.loads(client.get(f"/api/data-sources/{sid}").json()["config"])
-    assert config["tokens"]["access_token"] == "at-final"
-    assert "oauth_state" not in config  # 一次性 state 已清除
-    assert "oauth_code_verifier" not in config
+    # token 落库、一次性 state 已清除
+    with db_session() as db:
+        row = db.query(DataSource).filter(DataSource.id == sid).one()
+        db_cfg = json.loads(row.config)
+        assert db_cfg["tokens"]["access_token"] == "at-final"
+        assert "oauth_state" not in db_cfg  # 一次性 state 已清除
+        assert "oauth_code_verifier" not in db_cfg
+    # API 响应打码
+    api_cfg = json.loads(client.get(f"/api/data-sources/{sid}").json()["config"])
+    assert api_cfg["tokens"] == "***"
 
 
 def test_oauth_callback_wrong_state_400(client):

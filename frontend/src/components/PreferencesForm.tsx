@@ -50,7 +50,8 @@ export function PreferencesForm() {
         </label>
       </div>
       <p className="muted">
-        超出每日上限的复习点会自动顺延到次日；计划只会安排在「学习时段」内的空闲时间。
+        超出每日上限的复习点不会排入今日时间轴（顺延处理，可在今日页底部待安排区查看）；
+        计划只会安排在「学习时段」内的空闲时间。
       </p>
       <div className="form-actions">
         <button className="btn btn--primary btn--sm" onClick={save}>

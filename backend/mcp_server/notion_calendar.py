@@ -92,11 +92,18 @@ class NotionCalendarWriter:
             return CalendarSyncResult()
 
         existing = self._find_existing(iso)
-        by_title = {self._event_title(page): page for page in existing}
+        by_key = {self._event_key(page): page for page in existing}
+        # 标题 → 首个事件页（时间变更时复用旧页做更新；同名多页取第一条）
+        by_title: dict[str, dict] = {}
+        for page in existing:
+            by_title.setdefault(self._event_title(page), page)
 
         created = updated = unchanged = 0
         for item in items:
-            page = by_title.get(item.title)
+            page = by_key.get((item.title, item.start_time))
+            if page is None:
+                # 精确键未命中但标题存在 → 复用旧事件更新（幂等调整时间）
+                page = by_title.get(item.title)
             if page is None:
                 self._client.create_page(self._database_id(), self._build_properties(item))
                 created += 1
@@ -166,6 +173,23 @@ class NotionCalendarWriter:
             raise NotionCalendarError(f"Notion API 调用失败（{tool}）：{exc}") from exc
 
     # ---------- 幂等比对 ----------
+
+    def _event_key(self, page: dict) -> tuple[str, str]:
+        """已有事件的幂等键：标题 + 开始时间（HH:MM）。
+
+        仅用标题会互相覆盖同日同名但不同时段的事件（如两节同名课 /
+        同名杂项），导致重复建页或更新错位。页面返回的开始时间是
+        'YYYY-MM-DDTHH:MM:SS+08:00'，与计划项的 'HH:MM' 对齐后比较。
+        """
+        props = page.get("properties") or {}
+        date_prop = (props.get(self.props["date"]) or {}).get("date") or {}
+        start = str(date_prop.get("start", ""))
+        # 提取 HH:MM：兼容 'YYYY-MM-DDTHH:MM' 或 'YYYY-MM-DDTHH:MM:SS+08:00'
+        if len(start) >= 16 and start[10] == "T":
+            start_min = start[11:16]
+        else:
+            start_min = start
+        return (self._event_title(page), start_min)
 
     def _event_title(self, page: dict) -> str:
         """从已有事件提取标题（title 属性纯文本拼接）。"""

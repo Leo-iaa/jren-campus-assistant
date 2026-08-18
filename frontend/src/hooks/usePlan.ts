@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { courseApi, knowledgeApi, miscApi, reviewApi, taskApi } from '../api/client'
 import { useApi } from './useApi'
 import { dayOfWeek, toDateStr } from '../lib/date'
@@ -56,6 +56,7 @@ export function useTodayPlan(now: Date = new Date()) {
       miscItems: misc.data,
       studyStart: prefs.studyStart,
       studyEnd: prefs.studyEnd,
+      reviewDailyCap: prefs.reviewDailyCap,
     })
   }, [date, dow, prefs.studyStart, prefs.studyEnd, courses.data, allSessions.data, tasks.data, reviews.data, knowledge.data, misc.data])
 
@@ -84,18 +85,23 @@ export function useTodayPlan(now: Date = new Date()) {
     setSavedAt(null)
   }, [date])
 
+  /** 计划状态的最新引用（供 moveItem 读取当前值，避免把副作用写进 setState updater） */
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
   /** 拖拽调整：把 key 移到 targetKey 前面 */
   const moveItem = useCallback(
     (key: string, targetKey: string) => {
-      setState((prev) => {
-        const next: PlanLocalState = {
-          ...prev,
-          order: applyOrderMove(prev.order, key, targetKey),
-          adjustedAt: new Date().toISOString(),
-        }
-        savePlanState(date, next)
-        return next
-      })
+      const next: PlanLocalState = {
+        ...stateRef.current,
+        order: applyOrderMove(stateRef.current.order, key, targetKey),
+        adjustedAt: new Date().toISOString(),
+      }
+      stateRef.current = next
+      setState(next)
+      savePlanState(date, next)
     },
     [date],
   )
@@ -115,7 +121,12 @@ export function useTodayPlan(now: Date = new Date()) {
     savedAt,
     prefs,
     loading:
-      courses.loading || tasks.loading || reviews.loading || misc.loading,
+      courses.loading ||
+      allSessions.loading ||
+      tasks.loading ||
+      reviews.loading ||
+      knowledge.loading ||
+      misc.loading,
     error:
       courses.error ||
       allSessions.error ||
@@ -203,7 +214,12 @@ export function useWeekPlan(anchor: Date = new Date()) {
   return {
     week,
     courseById,
-    loading: courses.loading || allSessions.loading || tasks.loading || reviews.loading,
+    loading:
+      courses.loading ||
+      allSessions.loading ||
+      tasks.loading ||
+      reviews.loading ||
+      knowledge.loading,
     error:
       courses.error ||
       allSessions.error ||

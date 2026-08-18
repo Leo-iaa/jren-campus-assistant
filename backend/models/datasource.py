@@ -4,9 +4,8 @@
 """
 from sqlalchemy import CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql import func
 
-from backend.models.base import Base
+from backend.models.base import Base, shanghai_now
 
 # 支持的数据源类型（新数据源 = 新增 MCP adapter）
 SOURCE_TYPES = ("notion", "obsidian", "ical", "caldav")
@@ -29,7 +28,7 @@ class DataSource(Base):
     enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     last_sync_at: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[str] = mapped_column(
-        String, nullable=False, server_default=func.datetime("now")
+        String, nullable=False, default=shanghai_now
     )
 
     def __repr__(self) -> str:
