@@ -1,6 +1,7 @@
 # MCP Server 暴露层使用说明（WorkBuddy 接入）
 
-> 对应 Issue #20，实现于 `backend/mcp_server/`。本文档面向实际部署与联调，
+> 对应 Issue #20（暴露层）与 #55（add_task / Notion 任务库），实现于 `backend/mcp_server/`。
+> 本文档面向实际部署与联调，
 > 协议细节可参考 [docs/architecture.md](architecture.md) 2.1 载体层与
 > [docs/vision.md](vision.md)「提醒链路（方案 A）」。
 
@@ -8,7 +9,7 @@
 
 后端把业务能力包装为 **MCP Server**（Streamable HTTP 传输，挂载在 `/mcp` 路径），
 让 WorkBuddy（AI 载体）通过标准 MCP 协议调用：生成 / 预览 / 确认 / 调整每日计划、
-查询课程 / 任务 / 复习、标记完成并校准耗时预估。
+**一句话添加任务**、查询课程 / 任务 / 复习、标记完成并校准耗时预估。
 
 与 `backend/mcp_client/`（数据**接入**层：读 Notion / Obsidian / iCal）相对，
 本层是数据**暴露**层：WorkBuddy → `/mcp` → 编排服务 → 数据库 + 调度算法。
@@ -17,11 +18,12 @@
 WorkBuddy（MCP 客户端，微信远程）
    │  Streamable HTTP：http://127.0.0.1:8000/mcp（方案 A 同机）
    ▼
-backend/mcp_server/server.py    ← 8 个 MCP 工具（薄封装）
+backend/mcp_server/server.py    ← 9 个 MCP 工具（薄封装）
    ▼
-backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/完成/查询）
+backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/完成/查询/添加任务）
    ├── backend/scheduler/       ← 遗忘曲线 + 时间表规划器 + 校准（纯算法）
    ├── backend/mcp_server/notion_calendar.py  ← Notion 日历写入（幂等，时段块事件）
+   ├── backend/mcp_server/notion_task.py      ← Notion 任务库写入（属性探测降级）
    └── backend/mcp_server/scheduler_jobs.py   ← APScheduler 21:00 兜底
 ```
 
@@ -65,7 +67,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 > 注意：vbs 引用的是仓库的**绝对路径**；若仓库被移动，需同步更新 vbs 中的路径。
 
-## 3. 工具清单（8 个）
+## 3. 工具清单（9 个）
 
 | 工具 | 参数 | 返回 | 说明 |
 |------|------|------|------|
@@ -73,9 +75,10 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 | `get_today_plan_preview` | `date?`（默认今日） | 纯文本 | 微信友好预览：时间轴 + 确认状态，适合 08:00 推送 |
 | `confirm_plan` | `date`（必填） | JSON：confirmed_count / version / notion_sync | 确认计划 → 版本快照 → 写 Notion 日历（时段块事件） |
 | `adjust_plan_item` | `item_id`、`start_time`、`end_time`、`title?` | JSON：更新后的计划项 | 调整单项时间/标题；冲突会报错 |
+| `add_task` | `title`（必填）、`due_date?`、`task_type?`、`course_id?`、`estimated_minutes?` | JSON：task / plan_action / plan_message / notion_sync | **一句话添加任务**：写本地 + Notion 任务库，并联动今日计划（详见下） |
 | `mark_done` | `item_id`、`actual_minutes?` | JSON：计划项 + 校准记录 | 标记完成；task/review 记录「预估 vs 实际」校准 |
 | `get_courses` | 无 | JSON 数组 | 课程列表（含 S/A/B/C 档位） |
-| `get_tasks` | `status?`（todo/doing/done/cancelled） | JSON 数组 | 作业任务列表 |
+| `get_tasks` | `status?`（todo/doing/done/cancelled） | JSON 数组 | 作业任务列表（含类型 task_type） |
 | `get_reviews` | `due_date?`（YYYY-MM-DD） | JSON 数组 | 复习计划列表（含知识点与难度） |
 
 调用约定：
@@ -89,6 +92,30 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 - **已确认的计划不会自动重排**：再次调用 `generate_tomorrow_plan` 会提示
   「该日计划已确认」，改动请用 `adjust_plan_item` 逐项调整
 - 放不下的项目进 `dropped`，缺时长的杂项 / 与已完成项冲突的草案进 `skipped`
+
+### add_task 语义（一句话添加任务，Issue #55）
+
+微信工作流：用户说「有新任务：XXX，ddl 是 YYY，类型是 ZZZ」→ WorkBuddy 调
+`add_task` → 后端写本地 `tasks` 表 + Notion 任务库 → 联动今日计划 → 返回
+`plan_message`（WorkBuddy 直接转述给用户）。
+
+参数说明：
+- `title`：任务名（必填）
+- `due_date`：截止日期（YYYY-MM-DD，可选）
+- `task_type`：任务类型，枚举 **作业 / 实验 / 考试 / 其他**（可选）
+- `course_id`：关联课程 id（可选，用 `get_courses` 查）
+- `estimated_minutes`：预估耗时（分钟，可选，供规划器排时长）
+
+**计划联动设计理由**：是否立即重排今日，取决于「任务紧迫度」与「今日计划是否已确认」——
+
+| 场景 | 行为 | 理由 |
+|------|------|------|
+| ddl ≤ 明天 且 今日计划未确认 | 立即重排今日（复用 `generate_plan`，幂等），返回「已安排到今天 HH:MM-HH:MM」 | 紧迫任务尽早落位，避免拖到截止才想起 |
+| 今日计划已确认 | 不重排，提示下次生成时纳入 | 尊重已确认安排（与 `generate_tomorrow_plan` 同一保护语义） |
+| ddl 更远 / 无 ddl / 已过期 | 不挤占今天，下次 21:00 生成时自然纳入 | 远期任务不抢占今天时间片；过期任务不自动排（提示手动处理） |
+
+Notion 任务库写入为**尽力而为**：未配置任务库 / 写入失败不阻断添加，
+结果进 `notion_sync` 字段（WorkBuddy 可转述「任务库写入失败：原因」）。
 
 ## 4. WorkBuddy 连接步骤
 
@@ -112,7 +139,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
    }
    ```
 
-4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 8 个工具；
+4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 9 个工具；
    试着问「查询课程列表」或「今天的计划是什么」
 
 > 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址
@@ -195,6 +222,31 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 - 确认结果里 `notion_sync` 字段报告 `created / updated / unchanged`；
   Notion 未授权或未配置时该字段为错误信息或 null（**不阻断确认**）
 
+### 7.4 Notion 任务库写入（add_task 用，Issue #55）
+
+微信添加任务时把任务写入**第二个 Notion 库**（任务库，与日程库并列）：
+
+1. **找到任务库**：在 Notion 建「任务列表」模板数据库（属性：任务名称 / 截止日期 /
+   当前状态 / 优先级 / 备注），记下数据库 ID——直接粘贴**页面链接**也行，
+   `config_notion.bat` 会自动解析页面内嵌数据库并让你选择
+2. **配置任务库 ID**（二选一，与日程库配置并列，可共用同一个集成令牌）：
+   - 环境变量：`JREN_NOTION_TASK_DB=<数据库ID>`
+   - 或数据源 config：`"task_database_id": "<数据库ID>"`
+   - 推荐：重跑 `config_notion.bat`，脚本会引导输入/沿用三个配置（令牌 / 日程库 / 任务库）
+
+属性映射（默认名，可在 `config.task_props` 覆盖，**独立于日历库的 props**）：
+
+| 属性（默认名） | 用途 | 说明 |
+|----------------|------|------|
+| 任务名称（title） | 任务名 | 必填 |
+| 截止日期（date） | ddl | 只写日期 `YYYY-MM-DD`（date-only） |
+| 当前状态（status） | 初始状态 | 自动取库内「To-do 组」首选项名（如中文模板的「未开始」），选项名以库为准 |
+| 类型（select） | 任务类型 | 库中**没有该属性则跳过并提示**（补上后自动生效，零代码改动） |
+| 优先级 / 备注 | 暂未写入 | 预留，属性名可配置 |
+
+写入前用 `GET /v1/databases/{id}` 探测属性，**只写入库中真实存在的属性**——
+用户任务库没建「类型」属性时任务照常入库，`notion_sync.missing_props` 会报告缺失项。
+
 ## 8. 环境变量一览
 
 | 环境变量 | 默认 | 说明 |
@@ -202,6 +254,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 | `JREN_MCP_SCHEDULER_ENABLED` | `true` | 是否启用 21:00 兜底定时任务（测试/开发可关） |
 | `JREN_MCP_PLAN_GENERATE_TIME` | `21:00` | 兜底任务触发时间（HH:MM，Asia/Shanghai） |
 | `JREN_MCP_NOTION_CALENDAR_DB` | 无 | Notion 日程数据库 ID（或写入数据源 config） |
+| `JREN_MCP_NOTION_TASK_DB` | 无 | Notion 任务数据库 ID（add_task 写入用，或写入数据源 config） |
 
 ## 9. 微信通道实测记录
 
