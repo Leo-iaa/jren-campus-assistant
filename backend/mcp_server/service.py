@@ -279,6 +279,9 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         .all()
     ):
         db.delete(old)
+    # 先落地删除：SQLAlchemy flush 顺序默认「先插入后删除」，
+    # 若新草案与旧 draft 同 start_time，不先 DELETE 会撞 UNIQUE(date, start_time)
+    db.flush()
 
     placed_count = 0
     for draft in result.placed:
