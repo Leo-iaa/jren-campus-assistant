@@ -15,12 +15,22 @@ from tests.fakes import FakeNotionRest
 
 DB_ID = "task-db-123"
 
-#: 模拟用户任务库真实结构（任务列表模板，无「类型」属性）
+#: 模拟用户任务库真实结构（任务列表模板：状态选项为中文「未开始」，无「类型」属性）
 TASK_DB_SCHEMA = {
     "properties": {
         "任务名称": {"type": "title"},
         "截止日期": {"type": "date"},
-        "当前状态": {"type": "status"},
+        "当前状态": {
+            "type": "status",
+            "status": {
+                "options": [
+                    {"id": "o1", "name": "未开始"},
+                    {"id": "o2", "name": "进行中"},
+                    {"id": "o3", "name": "已完成"},
+                ],
+                "groups": [{"id": "g1", "name": "To-do", "option_ids": ["o1"]}],
+            },
+        },
         "优先级": {"type": "select"},
         "备注": {"type": "rich_text"},
     }
@@ -63,9 +73,30 @@ def test_create_task_writes_core_props_and_reports_missing_type():
     props = creates[0]["properties"]
     assert props["任务名称"]["title"][0]["text"]["content"] == "高数作业"
     assert props["截止日期"]["date"] == {"start": "2026-08-26"}  # date-only，无 end
-    assert props["当前状态"]["status"] == {"name": "To-do"}
+    # 状态选项名动态取自 schema（中文模板为「未开始」，不是分组名 To-do）
+    assert props["当前状态"]["status"] == {"name": "未开始"}
     assert "类型" not in props
     assert creates[0]["parent_database_id"] == DB_ID
+
+
+def test_create_task_status_falls_back_to_first_option():
+    """无 To-do 分组时取首个选项；status 属性无选项则不写状态。"""
+    schema = {
+        "properties": {
+            "任务名称": {"type": "title"},
+            "当前状态": {"type": "status", "status": {"options": [{"id": "x", "name": "待办"}]}},
+        }
+    }
+    fake = FakeNotionRest(database_schema=schema)
+    writer_with(fake).create_task({"title": "t"})
+    props = rest_calls(fake, "create_page")[0]["properties"]
+    assert props["当前状态"]["status"] == {"name": "待办"}
+
+    schema2 = {"properties": {"任务名称": {"type": "title"}, "当前状态": {"type": "status", "status": {}}}}
+    fake2 = FakeNotionRest(database_schema=schema2)
+    writer_with(fake2).create_task({"title": "t"})
+    props2 = rest_calls(fake2, "create_page")[0]["properties"]
+    assert "当前状态" not in props2
 
 
 def test_create_task_writes_type_when_property_exists():
