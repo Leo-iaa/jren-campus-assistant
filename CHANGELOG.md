@@ -27,6 +27,15 @@
 - 修复自启脚本绝对路径：`start_backend_hidden.vbs` 更新为当前仓库位置（#50）
 - `config_notion` 支持直接粘贴日程页面整条链接（自动提取 32 位数据库 ID，忽略视图 ID，#52）
 - README 补充「隐私与数据」说明（数据全本地、密钥自配、公开仓库须知，#53）
+- 微信一句话添加任务闭环（#55）：
+  - 新增 MCP 工具 `add_task`（第 9 个）：title / due_date / task_type（作业/实验/考试/其他）/ course_id / estimated_minutes，返回微信友好 `plan_message`
+  - 本地 `tasks` 表新增 `task_type` 列；`init_db` 轻量迁移自动为旧库补列（幂等）
+  - 新增 `backend/mcp_server/notion_task.py`：Notion 任务库写入器，写前探测数据库属性、只写真实存在的属性（缺「类型」等属性时跳过并报告，补属性后零代码生效）；状态选项名按库内 schema 动态解析（实测中文模板为「未开始」）
+  - 计划联动：ddl ≤ 明天且今日未确认 → 立即重排今日（复用 generate_plan）；已确认 / 远期 / 过期 → 下次 21:00 生成时纳入（设计理由见 docs/mcp-server.md）
+  - `config_notion.bat` 扩展为三配置（令牌 / 日程库 / 任务库），支持回车沿用已有配置；粘贴**页面链接**自动解析页面内嵌数据库并让用户选择（实测任务库为页面内数据库）
+  - 修复实测暴露的既有 bug：`generate_plan` 重排时删除先落地（flush），避免新草案与旧 draft 同 start_time 撞 UNIQUE(date, start_time)
+  - 文档同步：mcp-server.md（9 工具 + add_task 语义 + 7.4 任务库节）/ USER_GUIDE.md / database.md / README
+  - pytest 新增 22 例（任务库 writer 12 + service add_task 9 + 端点 1），全量 239 例通过；本地真实闭环实测通过（微信路径 add_task → 本地 tasks + Notion 任务库 + 今日计划）
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`

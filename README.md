@@ -18,7 +18,7 @@
 1. 🌙 **前一晚 21:00**：WorkBuddy 定时任务触发后端，自动读取当日数据（课表 / 新作业 / 新笔记），生成「明日计划」
 2. 🗓️ **计划写入 Notion Calendar**（原生日历，手机 / 电脑 / 平板三端同步）
 3. ☀️ **08:00**：微信收到「今日计划」推送（WorkBuddy 定时任务），Notion Calendar 同步展示事件
-4. 💬 **想调整？** 直接在 WorkBuddy / 微信里说：「把高数作业挪到晚上」「确认今天的计划」
+4. 💬 **想调整 / 加任务？** 直接在 WorkBuddy / 微信里说：「把高数作业挪到晚上」「确认今天的计划」「有新任务：XXX，ddl 是明天」
 5. ✅ 确认后计划生效 → 完成情况自动记录 → 持续校准时间预估 —— **越用越懂你**
 
 ## ✨ 核心功能
@@ -26,6 +26,7 @@
 | 功能 | 说明 |
 |------|------|
 | 📥 多源数据自动采集 | 通过 MCP 统一读取课表（iCal）、Notion（作业/任务）、Obsidian（课堂笔记） |
+| 💬 微信一句话加任务 | 对 WorkBuddy 说「有新任务：XXX，ddl 是 YYY，类型是 ZZZ」→ 自动写本地 + Notion 任务库并排进日程（`add_task` 工具，Issue #55） |
 | 🧠 知识点智能提取 | LLM 自动把当天笔记切分为「知识点记忆单元」并评估难度 |
 | 📈 遗忘曲线复习调度 | 按课程档位（S/A/B/C，用户自设）与知识点难度自动安排复习，结合作业 deadline 反推优先级 |
 | 🗓️ 时间表约束规划 | 固定课程 + 可变任务 + 可用时间片，生成不冲突的日程草案 |
@@ -42,7 +43,7 @@
 │  └─ AI 交互：WorkBuddy + 微信（对话确认/调整/查询）    │
 ├─────────────────────────────────────────────────┤
 │  后端：Python FastAPI                            │
-│  ├─ MCP Server 暴露层（对接 WorkBuddy，8 个工具）     │
+│  ├─ MCP Server 暴露层（对接 WorkBuddy，9 个工具）     │
 │  ├─ MCP 客户端层（Notion/Obsidian/iCal）         │
 │  ├─ 知识提取层（LLM 抽取知识点与难度）            │
 │  ├─ 遗忘曲线调度器（复习间隔算法）                │
@@ -106,7 +107,7 @@ jren-campus-assistant/
 │   ├── schemas/       # Pydantic 请求/响应模型（校验与枚举）
 │   ├── scheduler/     # 遗忘曲线 + 时间表规划 + 习惯校准（已实现）
 │   ├── mcp_client/    # MCP 数据接入层（Notion / Obsidian / iCal adapter）
-│   ├── mcp_server/    # MCP Server 暴露层（WorkBuddy 接入：8 工具 + 定时任务 + Notion 日历写入）
+│   ├── mcp_server/    # MCP Server 暴露层（WorkBuddy 接入：9 工具 + 定时任务 + Notion 日历/任务库写入）
 │   ├── scripts/       # 工具脚本（init_db.py 数据库初始化）
 │   ├── tests/         # pytest 测试（212 例）
 │   └── data/          # SQLite 数据库文件（运行时生成，不入库）
@@ -159,7 +160,7 @@ python -m pytest
 
 ### WorkBuddy 集成
 
-> ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，8 个工具），
+> ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，9 个工具，含 add_task），
 > 完整配置见 [docs/mcp-server.md](docs/mcp-server.md)。
 
 1. 启动后端：`uvicorn backend.main:app --host 0.0.0.0 --port 8000`

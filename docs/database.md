@@ -114,6 +114,7 @@ CREATE TABLE tasks (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   course_id         INTEGER REFERENCES courses(id) ON DELETE SET NULL,
   title             TEXT NOT NULL,
+  task_type         TEXT,                     -- 任务类型（作业/实验/考试/其他，add_task 写入）
   description       TEXT,
   deadline          TEXT,                     -- 截止时间
   estimated_minutes INTEGER,                  -- 预估耗时（供规划器使用）
@@ -125,6 +126,9 @@ CREATE TABLE tasks (
   created_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
+
+> `task_type` 列由 Issue #55 新增（微信一句话加任务）；旧库通过 `init_db`
+> 的轻量迁移自动补列（`ALTER TABLE tasks ADD COLUMN task_type TEXT`，幂等）。
 
 ### 3.7 `plan_items` —— 日程计划项（核心表）
 
