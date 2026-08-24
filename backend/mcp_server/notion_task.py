@@ -40,8 +40,9 @@ DEFAULT_TASK_PROPS: dict[str, str] = {
     "description": "备注",
 }
 
-#: status 属性初始选项名（Notion 任务模板：To-do / In progress / Complete）
-STATUS_TODO = "To-do"
+#: status 属性初始选项名（旧版写死 To-do，实测 Notion 中文模板选项为「未开始」——
+#: 现改为从数据库 schema 动态查找，见 _initial_status_name）
+STATUS_INITIAL = "未开始"
 
 
 class NotionTaskError(Exception):
@@ -93,8 +94,11 @@ class NotionTaskWriter:
                 else:
                     missing.append(self.props["date"])
 
-            if self.props["status"] in present:
-                properties[self.props["status"]] = {"status": {"name": STATUS_TODO}}
+            initial_status = self._initial_status_name(
+                (schema.get("properties") or {}).get(self.props["status"])
+            )
+            if initial_status:
+                properties[self.props["status"]] = {"status": {"name": initial_status}}
 
             task_type = task.get("task_type")
             if task_type:
@@ -115,6 +119,32 @@ class NotionTaskWriter:
         return {"page_id": page.get("id"), "missing_props": missing}
 
     # ---------- 内部 ----------
+
+    @staticmethod
+    def _initial_status_name(status_prop: dict | None) -> str | None:
+        """从 status 属性定义中找「待办」选项名。
+
+        Notion status 属性返回结构：``{"type": "status", "status": {"options": [...], "groups": [...]}}``
+        （groups 只是分组展示 To-do / In progress / Complete，实际可写值在
+        options——如中文模板的「未开始」）。策略：优先取 To-do 组下的首个
+        选项，找不到则取首个选项；无选项返回 None（不写状态属性）。
+        """
+        if not isinstance(status_prop, dict):
+            return None
+        prop = status_prop.get("status")
+        if not isinstance(prop, dict):
+            prop = status_prop  # 兼容直接传入 status 内部结构
+        options = prop.get("options") or []
+        if not options:
+            return None
+        groups = prop.get("groups") or []
+        todo_group = next((g for g in groups if g.get("name") == "To-do"), None)
+        if todo_group:
+            option_ids = set(todo_group.get("option_ids") or [])
+            for opt in options:
+                if opt.get("id") in option_ids:
+                    return opt.get("name")
+        return options[0].get("name")
 
     def _database_id(self) -> str:
         db_id = self.config.get("task_database_id")
