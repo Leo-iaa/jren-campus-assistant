@@ -50,10 +50,12 @@ class FakeNotionRest:
         query_results: list[dict] | None = None,
         create_result: dict | None = None,
         update_result: dict | None = None,
+        database_schema: dict | None = None,
     ) -> None:
         self.query_results = query_results or []
         self.create_result = create_result or {"id": "new-page"}
         self.update_result = update_result or {"id": "updated-page"}
+        self.database_schema = database_schema or {"properties": {}}
         self.calls: list[tuple[str, dict]] = []
 
     def _record(self, method: str, **kwargs) -> None:
@@ -62,6 +64,10 @@ class FakeNotionRest:
     def query_database(self, database_id: str, filter: dict | None = None, page_size: int = 100) -> list[dict]:
         self._record("query_database", database_id=database_id, filter=filter, page_size=page_size)
         return self.query_results
+
+    def retrieve_database(self, database_id: str) -> dict:
+        self._record("retrieve_database", database_id=database_id)
+        return self.database_schema
 
     def create_page(self, parent_database_id: str, properties: dict) -> dict:
         self._record("create_page", parent_database_id=parent_database_id, properties=properties)

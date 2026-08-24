@@ -22,6 +22,7 @@ class Task(Base):
         ForeignKey("courses.id", ondelete="SET NULL")
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
+    task_type: Mapped[str | None] = mapped_column(String)  # 任务类型（作业/实验/考试/其他）
     description: Mapped[str | None] = mapped_column(Text)
     deadline: Mapped[str | None] = mapped_column(String)  # 截止时间
     estimated_minutes: Mapped[int | None] = mapped_column(Integer)  # 预估耗时（供规划器）

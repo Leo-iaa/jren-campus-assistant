@@ -640,6 +640,142 @@ def _record_calibration(
     stat.factor = round(stat.ratio_sum / stat.sample_count, 6)
 
 
+# ---------- 添加任务 + 计划联动 ----------
+
+
+#: 任务类型枚举（add_task 校验；与 Notion 任务库「类型」属性对齐）
+TASK_TYPES: tuple[str, ...] = ("作业", "实验", "考试", "其他")
+
+
+@dataclass(frozen=True)
+class AddTaskResult:
+    """添加任务结果。"""
+
+    task: dict
+    notion_sync: dict | None = None  # 任务库写入结果或错误信息
+    plan_action: str = "deferred"  # scheduled_today / deferred
+    plan_message: str = ""  # 计划联动中文说明
+    placed: dict | None = None  # 排到今天的计划项（若有）
+
+
+def add_task(
+    db: Session,
+    *,
+    title: str,
+    due_date: str | None = None,
+    task_type: str | None = None,
+    course_id: int | None = None,
+    estimated_minutes: int | None = None,
+    task_writer=None,
+) -> AddTaskResult:
+    """添加任务：本地落库 → 写 Notion 任务库 → 与当日计划联动。
+
+    - 本地 tasks 表必写（source='manual'，status='todo'）
+    - Notion 任务库写入尽力而为：未配置 / 失败不阻断，结果写入 ``notion_sync``
+    - 计划联动（设计理由见 docs/mcp-server.md「add_task」）：
+      · ddl ≤ 明天 且 今日计划未确认 → 立即重排今日（复用 generate_plan，幂等）
+      · 今日计划已确认 → 不重排（保护已确认安排），提示下次生成时纳入
+      · ddl 更远 / 无 ddl / 已过期 → 不挤占今天，下次 21:00 生成时自然纳入
+    """
+    title = (title or "").strip()
+    if not title:
+        raise ValueError("任务标题不能为空")
+
+    if due_date is not None:
+        parse_date(due_date)  # 校验 YYYY-MM-DD
+    if task_type is not None and task_type not in TASK_TYPES:
+        raise ValueError(f"未知任务类型: {task_type!r}（应为 {'/'.join(TASK_TYPES)}）")
+    if course_id is not None and db.get(Course, course_id) is None:
+        raise ValueError(f"所属课程不存在（id={course_id}）")
+
+    # 1. 本地任务落库
+    task = Task(
+        title=title,
+        task_type=task_type,
+        deadline=due_date,
+        course_id=course_id,
+        estimated_minutes=estimated_minutes,
+        source="manual",
+        status="todo",
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    # 2. Notion 任务库（尽力而为，失败不阻断）
+    notion_sync: dict | None = None
+    if task_writer is not None:
+        try:
+            result = task_writer.create_task(
+                {
+                    "title": task.title,
+                    "deadline": task.deadline,
+                    "task_type": task.task_type,
+                }
+            )
+            page_id = result.get("page_id")
+            if page_id:
+                task.source_ref = page_id
+                db.commit()
+            notion_sync = {
+                "created": bool(page_id),
+                "page_id": page_id,
+                "missing_props": result.get("missing_props", []),
+            }
+        except Exception as exc:  # noqa: BLE001 —— 任务库写入尽力而为
+            notion_sync = {"error": str(exc)}
+
+    # 3. 计划联动
+    today = shanghai_today()
+    iso = today.isoformat()
+    has_confirmed = (
+        db.query(PlanItem.id)
+        .filter(PlanItem.date == iso, PlanItem.status == "confirmed")
+        .first()
+    )
+
+    placed_dict: dict | None = None
+    if due_date is not None and due_date < iso:
+        plan_action, plan_message = "deferred", "任务截止日期已过，不会自动安排，请手动处理"
+    elif has_confirmed is not None:
+        plan_action, plan_message = "deferred", (
+            "今天的计划已确认，不自动重排；新任务将在下次生成计划时自动纳入"
+            "（每晚 21:00 预生成次日计划）。如需今天就做，可回复「生成明天的计划」。"
+        )
+    elif due_date is not None and due_date <= (today + timedelta(days=1)).isoformat():
+        # ddl 紧迫（今天/明天）：重排今日（复用生成器，替换 draft/adjusted 保留 done）
+        generate_plan(db, today)
+        placed = (
+            db.query(PlanItem)
+            .filter(
+                PlanItem.date == iso,
+                PlanItem.item_type == "task",
+                PlanItem.ref_id == task.id,
+            )
+            .first()
+        )
+        if placed is not None:
+            plan_action = "scheduled_today"
+            plan_message = f"已安排到今天 {placed.start_time}-{placed.end_time}"
+            placed_dict = _item_to_dict(placed)
+        else:
+            plan_action, plan_message = "deferred", (
+                "今天的时间排不下了，任务将在下次生成计划时优先纳入"
+            )
+    else:
+        plan_action, plan_message = "deferred", (
+            "任务已添加，将在下次生成计划时自动纳入（每晚 21:00 预生成次日计划）"
+        )
+
+    return AddTaskResult(
+        task=_task_to_dict(task),
+        notion_sync=notion_sync,
+        plan_action=plan_action,
+        plan_message=plan_message,
+        placed=placed_dict,
+    )
+
+
 # ---------- 查询 ----------
 
 
@@ -660,6 +796,23 @@ def list_courses(db: Session) -> list[dict]:
     ]
 
 
+def _task_to_dict(t: Task) -> dict:
+    """Task → 字典（工具返回 / 查询列表用）。"""
+    return {
+        "id": t.id,
+        "title": t.title,
+        "task_type": t.task_type,
+        "description": t.description,
+        "deadline": t.deadline,
+        "estimated_minutes": t.estimated_minutes,
+        "course_id": t.course_id,
+        "course_name": t.course.name if t.course else None,
+        "status": t.status,
+        "source": t.source,
+        "source_ref": t.source_ref,
+    }
+
+
 def list_tasks(db: Session, status: str | None = None) -> list[dict]:
     """任务列表（可按状态过滤：todo/doing/done/cancelled）。"""
     query = db.query(Task)
@@ -668,20 +821,7 @@ def list_tasks(db: Session, status: str | None = None) -> list[dict]:
             raise ValueError(f"未知任务状态: {status!r}（应为 todo/doing/done/cancelled）")
         query = query.filter(Task.status == status)
     rows = query.order_by(Task.id).all()
-    return [
-        {
-            "id": t.id,
-            "title": t.title,
-            "description": t.description,
-            "deadline": t.deadline,
-            "estimated_minutes": t.estimated_minutes,
-            "course_id": t.course_id,
-            "course_name": t.course.name if t.course else None,
-            "status": t.status,
-            "source": t.source,
-        }
-        for t in rows
-    ]
+    return [_task_to_dict(t) for t in rows]
 
 
 def list_reviews(db: Session, due_date: str | None = None) -> list[dict]:
