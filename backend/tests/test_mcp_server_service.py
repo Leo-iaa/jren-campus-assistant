@@ -176,6 +176,24 @@ def test_generate_plan_skips_misc_without_duration(db_session):
         assert result.placed_count == 5
 
 
+def test_generate_plan_replaces_draft_with_same_start_time(db_session):
+    """重排时新草案与旧 draft 同 start_time 不撞 UNIQUE（删除先落地再插入）。"""
+    with db_session() as db:
+        seed_basic(db)
+        generate_plan(db, PLAN_DATE)
+        # 任务时长改为 120 分钟 → 位置变化，但仍可能与旧草案某 start 相同
+        task = db.query(Task).filter(Task.title == "高数作业").first()
+        task.estimated_minutes = 120
+        db.commit()
+
+        result = generate_plan(db, PLAN_DATE)
+        assert result.placed_count == 5  # 课程 2 + 任务 + 复习 + 杂项，全部重新放好
+        assert result.skipped == []
+        items = plan_items(db, PLAN_DATE)
+        starts = [i.start_time for i in items]
+        assert len(starts) == len(set(starts))  # 无重复 start_time
+
+
 def test_generate_plan_ignores_overdue_tasks(db_session):
     with db_session() as db:
         seed_basic(db)
