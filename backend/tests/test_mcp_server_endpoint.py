@@ -19,6 +19,7 @@ EXPECTED_TOOLS = [
     "adjust_plan_item",
     "mark_done",
     "get_courses",
+    "add_task",
     "get_tasks",
     "get_reviews",
 ]
@@ -148,6 +149,26 @@ def test_mcp_tool_returns_error_text_on_bad_input(client):
     result = call_tool(client, session_id, "get_tasks", {"status": "bogus"}, mid=21)
     assert "error" in result
     assert "未知任务状态" in result["error"]
+
+
+def test_mcp_add_task_end_to_end(client, db_session):
+    """端到端：add_task 落库（无 Notion 源时静默跳过任务库写入），get_tasks 可查回。"""
+    session_id = handshake(client)
+    result = call_tool(
+        client, session_id, "add_task",
+        {"title": "端点测试任务", "task_type": "作业", "due_date": "2026-08-26"},
+        mid=23,
+    )
+    assert result["task"]["title"] == "端点测试任务"
+    assert result["task"]["task_type"] == "作业"
+    assert result["task"]["deadline"] == "2026-08-26"
+    assert result["plan_action"] in ("scheduled_today", "deferred")
+    assert "已添加任务" in result["message"]
+    # 未绑定 Notion 数据源 → notion_sync 为 null，不报错
+    assert result["notion_sync"] is None
+
+    tasks = call_tool(client, session_id, "get_tasks", {}, mid=24)
+    assert any(t["title"] == "端点测试任务" for t in tasks)
 
 
 def test_mcp_tool_missing_required_param_rejected_by_sdk(client):

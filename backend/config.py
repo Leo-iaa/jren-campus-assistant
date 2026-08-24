@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     mcp_plan_generate_time: str = "21:00"
     # Notion 日程数据库 ID（或写入数据源 config.calendar_database_id）
     mcp_notion_calendar_db: str | None = None
+    # Notion 任务数据库 ID（或写入数据源 config.task_database_id；add_task 写入用）
+    mcp_notion_task_db: str | None = None
 
 
 # 全局单例，供各模块直接导入使用

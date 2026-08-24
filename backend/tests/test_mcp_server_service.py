@@ -2,7 +2,7 @@
 
 使用 conftest 的临时 SQLite 数据库夹具，不依赖任何外部服务。
 """
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -19,6 +19,7 @@ from backend.models import (
 )
 from backend.mcp_server.notion_calendar import CalendarSyncResult
 from backend.mcp_server.service import (
+    add_task,
     adjust_plan_item,
     confirm_plan,
     generate_plan,
@@ -433,6 +434,138 @@ def test_list_reviews_filter(db_session):
         assert reviews[0]["course_name"] == "高等数学"
         assert reviews[0]["difficulty"] == 3
         assert list_reviews(db) == reviews  # 不过滤时同样只有这一条
+
+
+# ---------- 添加任务 + 计划联动 ----------
+
+
+def _fixed_today(monkeypatch) -> date:
+    """固定「今天」= 2026-08-24（周一，weekday()=0），避免依赖真实日期。"""
+    today = date(2026, 8, 24)
+    import backend.mcp_server.service as svc
+
+    monkeypatch.setattr(svc, "shanghai_today", lambda: today)
+    return today
+
+
+def test_add_task_basic_defers_when_no_due_date(db_session, monkeypatch):
+    """无 ddl 的任务不挤占今天：落库 + 下次 21:00 生成时纳入。"""
+    today = _fixed_today(monkeypatch)
+    with db_session() as db:
+        seed_basic(db, today)
+        generate_plan(db, today)
+        result = add_task(db, title="背单词", estimated_minutes=30)
+
+        assert result.task["title"] == "背单词"
+        assert result.task["status"] == "todo"
+        assert result.task["source"] == "manual"
+        assert result.task["task_type"] is None
+        assert result.plan_action == "deferred"
+        assert "21:00" in result.plan_message
+        assert result.placed is None
+        assert result.notion_sync is None
+        # 今日草案未被重排（无 ddl 不挤占今天）
+        assert not any(i.title == "背单词" for i in plan_items(db, today))
+
+
+def test_add_task_urgent_reorders_today(db_session, monkeypatch):
+    """ddl=今天且计划未确认 → 立即重排今日，任务出现在今天。"""
+    today = _fixed_today(monkeypatch)
+    with db_session() as db:
+        seed_basic(db, today)
+        result = add_task(
+            db,
+            title="实验报告",
+            due_date=today.isoformat(),
+            task_type="实验",
+            estimated_minutes=60,
+        )
+
+        assert result.plan_action == "scheduled_today"
+        assert result.placed is not None
+        assert result.placed["title"] == "实验报告"
+        assert "已安排到今天" in result.plan_message
+        # 落库完整：类型 + 截止日期
+        task = db.get(Task, result.task["id"])
+        assert task.task_type == "实验"
+        assert task.deadline == today.isoformat()
+
+
+def test_add_task_urgent_tomorrow_also_reorders(db_session, monkeypatch):
+    """ddl=明天同样视为紧迫，重排今日（尽早安排）。"""
+    today = _fixed_today(monkeypatch)
+    with db_session() as db:
+        seed_basic(db, today)
+        result = add_task(db, title="明日截止作业", due_date=(today + timedelta(days=1)).isoformat())
+        assert result.plan_action == "scheduled_today"
+        assert result.placed is not None
+
+
+def test_add_task_respects_confirmed_plan(db_session, monkeypatch):
+    """今日计划已确认 → 不重排（保护已确认安排）。"""
+    today = _fixed_today(monkeypatch)
+    with db_session() as db:
+        seed_basic(db, today)
+        generate_plan(db, today)
+        confirm_plan(db, today, calendar_writer=None)
+
+        result = add_task(db, title="新作业", due_date=today.isoformat())
+        assert result.plan_action == "deferred"
+        assert "已确认" in result.plan_message
+        assert all(i.status == "confirmed" for i in plan_items(db, today))
+
+
+def test_add_task_overdue_not_scheduled(db_session, monkeypatch):
+    """ddl 已过 → 不自动排，明确提示手动处理。"""
+    today = _fixed_today(monkeypatch)
+    with db_session() as db:
+        seed_basic(db, today)
+        result = add_task(db, title="补录过期任务", due_date="2026-08-20")
+        assert result.plan_action == "deferred"
+        assert "已过" in result.plan_message
+        assert not any(i.title == "补录过期任务" for i in plan_items(db, today))
+
+
+def test_add_task_notion_writer_success_saves_source_ref(db_session, monkeypatch):
+    _fixed_today(monkeypatch)
+    with db_session() as db:
+        class OkWriter:
+            def create_task(self, payload):
+                return {"page_id": "page-123", "missing_props": ["类型"]}
+
+        result = add_task(db, title="高数作业", task_type="作业", task_writer=OkWriter())
+        assert result.notion_sync == {
+            "created": True,
+            "page_id": "page-123",
+            "missing_props": ["类型"],
+        }
+        assert db.get(Task, result.task["id"]).source_ref == "page-123"
+
+
+def test_add_task_notion_writer_error_does_not_block(db_session, monkeypatch):
+    """Notion 写入失败不阻断：本地任务仍在，错误进 notion_sync。"""
+    _fixed_today(monkeypatch)
+    with db_session() as db:
+        class BrokenWriter:
+            def create_task(self, payload):
+                raise RuntimeError("网络超时")
+
+        result = add_task(db, title="作业", task_writer=BrokenWriter())
+        assert result.notion_sync == {"error": "网络超时"}
+        assert db.get(Task, result.task["id"]) is not None
+
+
+def test_add_task_validation(db_session):
+    with db_session() as db:
+        with pytest.raises(ValueError, match="标题不能为空"):
+            add_task(db, title="   ")
+        with pytest.raises(ValueError, match="未知任务类型"):
+            add_task(db, title="x", task_type="随笔")
+        with pytest.raises(ValueError, match="日期格式"):
+            add_task(db, title="x", due_date="2026/08/24")
+        with pytest.raises(ValueError, match="课程不存在"):
+            add_task(db, title="x", course_id=999)
+        assert db.query(Task).count() == 0  # 校验失败不落库
 
 
 # ---------- 工具函数 ----------

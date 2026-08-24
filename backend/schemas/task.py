@@ -14,6 +14,7 @@ MiscStatus = Literal["todo", "done", "cancelled"]
 class TaskBase(BaseModel):
     course_id: int | None = None
     title: str = Field(min_length=1, max_length=200)
+    task_type: str | None = None  # 任务类型（作业/实验/考试/其他，MCP add_task 强校验）
     description: str | None = None
     deadline: str | None = Field(default=None, pattern=DATE_PATTERN)
     estimated_minutes: int | None = Field(default=None, ge=1)
@@ -29,6 +30,7 @@ class TaskCreate(TaskBase):
 class TaskUpdate(BaseModel):
     course_id: int | None = None
     title: str | None = Field(default=None, min_length=1, max_length=200)
+    task_type: str | None = None
     description: str | None = None
     deadline: str | None = Field(default=None, pattern=DATE_PATTERN)
     estimated_minutes: int | None = Field(default=None, ge=1)

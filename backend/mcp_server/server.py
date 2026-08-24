@@ -1,9 +1,9 @@
 """MCP Server 暴露层：把后端能力包装为 MCP 工具（WorkBuddy 等客户端可调用）。
 
 - 传输：Streamable HTTP，挂载 ``/mcp`` 路径（接线见 ``backend/main.py``）
-- 工具（8 个，对齐 docs/mcp-server.md）：
+- 工具（9 个，对齐 docs/mcp-server.md）：
   generate_tomorrow_plan / get_today_plan_preview / confirm_plan /
-  adjust_plan_item / get_courses / get_tasks / get_reviews / mark_done
+  adjust_plan_item / add_task / get_courses / get_tasks / get_reviews / mark_done
 - 每个工具调用使用独立数据库会话（``SessionLocal``），互不干扰；
   ``db_factory`` 可注入（测试指向临时数据库）
 - 工具返回 JSON 文本（ensure_ascii=False），便于 LLM 客户端直接阅读；
@@ -26,7 +26,9 @@ from sqlalchemy.orm import Session
 from backend.config import settings
 from backend.database import SessionLocal
 from backend.mcp_server.notion_calendar import NotionCalendarError, build_writer
+from backend.mcp_server.notion_task import NotionTaskError, build_task_writer
 from backend.mcp_server.service import (
+    add_task,
     adjust_plan_item,
     confirm_plan,
     generate_plan,
@@ -62,6 +64,13 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_courses": "查询课程列表（含 S/A/B/C 档位）。",
     "get_tasks": "查询作业任务列表，可按 status 过滤（todo/doing/done/cancelled）。",
     "get_reviews": "查询复习计划列表，可按 due_date（YYYY-MM-DD）过滤。",
+    "add_task": (
+        "添加任务（微信一句话加任务）：title 必填，due_date 可选（YYYY-MM-DD），"
+        "task_type 可选（作业/实验/考试/其他），course_id 可选，estimated_minutes 可选（分钟）。"
+        "自动写入本地任务库与 Notion 任务库；ddl 紧迫（今天/明天）且今日计划未确认时"
+        "自动安排进今日计划，否则下次 21:00 生成计划时纳入。"
+        "返回：task / plan_message（是否已安排）/ notion_sync。"
+    ),
     "mark_done": (
         "标记计划项完成：item_id 必填，actual_minutes 为实际耗时（分钟，可选）。"
         "task/review 项记录「预估 vs 实际」校准；review 项联动复习计划置 done。"
@@ -196,6 +205,53 @@ def build_mcp_server(
     def get_courses_tool() -> str:
         with session_scope() as db:
             return json.dumps(list_courses(db), ensure_ascii=False)
+
+    @server.tool(name="add_task", description=_TOOL_DESCRIPTIONS["add_task"])
+    @safe
+    def add_task_tool(
+        title: str,
+        due_date: str | None = None,
+        task_type: str | None = None,
+        course_id: int | None = None,
+        estimated_minutes: int | None = None,
+    ) -> str:
+        notion_error: str | None = None
+        writer = None
+        with session_scope() as db:
+            try:
+                writer = build_task_writer(db)
+            except NotionTaskError as exc:
+                notion_error = str(exc)
+            result = add_task(
+                db,
+                title=title,
+                due_date=due_date,
+                task_type=task_type,
+                course_id=course_id,
+                estimated_minutes=estimated_minutes,
+                task_writer=writer,
+            )
+        payload: dict[str, Any] = {
+            "task": result.task,
+            "plan_action": result.plan_action,
+            "plan_message": result.plan_message,
+            "placed": result.placed,
+            "notion_sync": result.notion_sync,
+        }
+        if notion_error and payload["notion_sync"] is None:
+            payload["notion_sync"] = {"error": notion_error}
+        message = f"已添加任务「{result.task['title']}」；{result.plan_message}"
+        sync = payload["notion_sync"]
+        if sync and "error" in sync:
+            message += f"（Notion 任务库写入失败：{sync['error']}）"
+        elif sync and sync.get("missing_props"):
+            message += (
+                "（Notion 任务库缺少属性："
+                + "、".join(sync["missing_props"])
+                + "，已跳过；在 Notion 补上后自动生效）"
+            )
+        payload["message"] = message
+        return json.dumps(payload, ensure_ascii=False)
 
     @server.tool(name="get_tasks", description=_TOOL_DESCRIPTIONS["get_tasks"])
     @safe

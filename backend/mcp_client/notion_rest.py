@@ -53,6 +53,10 @@ class NotionRestClient:
         data = self._request("POST", f"/v1/databases/{database_id}/query", body)
         return data.get("results", [])
 
+    def retrieve_database(self, database_id: str) -> dict:
+        """读取数据库详情（含全部属性定义，供写入前探测属性名/类型）。"""
+        return self._request("GET", f"/v1/databases/{database_id}")
+
     def create_page(self, parent_database_id: str, properties: dict) -> dict:
         """在数据库中新建页面（事件）。"""
         body = {"parent": {"database_id": parent_database_id}, "properties": properties}
