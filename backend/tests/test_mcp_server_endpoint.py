@@ -132,6 +132,9 @@ def test_mcp_generate_plan_end_to_end(client, db_session):
     generated = call_tool(client, session_id, "generate_tomorrow_plan", {"date": "2026-08-19"}, mid=11)
     assert generated["placed"] == 1
     assert generated["dropped"] == []
+    # 返回含完整计划文本（WorkBuddy 21:00 可直接推微信，不必只给一句话）
+    assert "preview" in generated
+    assert "高等数学" in generated["preview"] and "08:00" in generated["preview"]
 
     preview = call_tool(client, session_id, "get_today_plan_preview", {"date": "2026-08-19"}, mid=12)
     assert "高等数学" in preview
