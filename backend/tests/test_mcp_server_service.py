@@ -342,6 +342,59 @@ def test_adjust_plan_item_conflict_raises(db_session):
             adjust_plan_item(db, task_item.id, "08:30", "09:00")
 
 
+def test_adjust_plan_item_syncs_calendar_when_confirmed(db_session):
+    """该日计划已确认（已写日历）→ 调整后增量同步 Notion 日历。"""
+    with db_session() as db:
+        seed_basic(db)
+        generate_plan(db, PLAN_DATE)
+        confirm_plan(db, PLAN_DATE, calendar_writer=None)
+        task_item = next(i for i in plan_items(db) if i.item_type == "task")
+
+        writer = FakeCalendarWriter()
+        updated = adjust_plan_item(
+            db, task_item.id, "20:00", "21:00", calendar_writer=writer
+        )
+        assert updated["start_time"] == "20:00"
+        assert updated["notion_sync"] == {"created": 1, "updated": 0, "unchanged": 0}
+        assert writer.calls == [PLAN_DATE]  # 同步了当日
+        # 已确认计划保持不变（adjusted 项本身除外）
+        assert any(i.status == "confirmed" for i in plan_items(db, PLAN_DATE))
+
+
+def test_adjust_plan_item_no_calendar_sync_when_draft(db_session):
+    """草案阶段不写日历（确认时才统一写入）：writer 不触发。"""
+    with db_session() as db:
+        seed_basic(db)
+        generate_plan(db, PLAN_DATE)
+        task_item = next(i for i in plan_items(db) if i.item_type == "task")
+
+        writer = FakeCalendarWriter()
+        updated = adjust_plan_item(
+            db, task_item.id, "20:00", "21:00", calendar_writer=writer
+        )
+        assert "notion_sync" not in updated
+        assert writer.calls == []
+
+
+def test_adjust_plan_item_calendar_error_does_not_block(db_session):
+    """日历同步失败不阻断调整（notion_sync 记录错误）。"""
+    with db_session() as db:
+        seed_basic(db)
+        generate_plan(db, PLAN_DATE)
+        confirm_plan(db, PLAN_DATE, calendar_writer=None)
+        task_item = next(i for i in plan_items(db) if i.item_type == "task")
+
+        class BrokenWriter:
+            def sync_plan_to_calendar(self, db, plan_date):
+                raise RuntimeError("网络超时")
+
+        updated = adjust_plan_item(
+            db, task_item.id, "20:00", "21:00", calendar_writer=BrokenWriter()
+        )
+        assert updated["notion_sync"] == {"error": "网络超时"}
+        assert updated["start_time"] == "20:00"  # 调整本身成功
+
+
 def test_adjust_plan_item_bad_time_raises(db_session):
     with db_session() as db:
         seed_basic(db)

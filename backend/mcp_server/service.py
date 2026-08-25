@@ -499,11 +499,14 @@ def adjust_plan_item(
     start_time: str,
     end_time: str,
     title: str | None = None,
+    calendar_writer=None,
 ) -> dict:
     """调整单个计划项的时间（可选改标题），返回更新后的计划项字典。
 
-    校验：时间格式、end > start、与同日其他计划项不重叠、起始分钟唯一
-    （UNIQUE(date, start_time)）。冲突抛 ValueError（中文报错）。
+    ``calendar_writer`` 注入 Notion Calendar 写入器：**仅当该日计划已确认**
+    （即已写入过日历）时增量同步当日到日历（幂等，复用 sync_plan_to_calendar）；
+    草案阶段不写日历（确认时统一写入）。同步结果写入返回的 ``notion_sync``
+    字段，失败不阻断调整。
     """
     item = db.get(PlanItem, item_id)
     if item is None:
@@ -536,7 +539,30 @@ def adjust_plan_item(
         item.title = title
     db.commit()
     db.refresh(item)
-    return _item_to_dict(item)
+    result = _item_to_dict(item)
+
+    # 日历同步：仅当该日已有 confirmed 项（确认过并写入过日历）才增量同步
+    has_confirmed = (
+        db.query(PlanItem.id)
+        .filter(PlanItem.date == item.date, PlanItem.status == "confirmed")
+        .first()
+    )
+    if has_confirmed is not None:
+        if calendar_writer is not None:
+            try:
+                sync = calendar_writer.sync_plan_to_calendar(
+                    db, parse_date(item.date)
+                )
+                result["notion_sync"] = {
+                    "created": sync.created,
+                    "updated": sync.updated,
+                    "unchanged": sync.unchanged,
+                }
+            except Exception as exc:  # noqa: BLE001 —— 日历同步尽力而为
+                result["notion_sync"] = {"error": str(exc)}
+        else:
+            result["notion_sync"] = None  # 未绑定 Notion / 未配置日历库
+    return result
 
 
 # ---------- 完成 + 校准 ----------
