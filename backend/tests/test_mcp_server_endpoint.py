@@ -174,6 +174,71 @@ def test_mcp_add_task_end_to_end(client, db_session):
     assert any(t["title"] == "端点测试任务" for t in tasks)
 
 
+def test_mcp_generate_plan_with_auto_confirm(client, db_session):
+    """auto_confirm=true：生成 → 立即确认 + 版本快照（无 Notion 源时 notion_sync 为 null）。"""
+    with db_session() as db:
+        course = Course(name="高等数学", tier="S")
+        db.add(course)
+        db.flush()
+        db.add(
+            CourseSession(
+                course_id=course.id, day_of_week=2, start_time="08:00", end_time="09:40", release_slot=0
+            )
+        )
+        db.commit()
+
+    session_id = handshake(client)
+    generated = call_tool(
+        client, session_id, "generate_tomorrow_plan",
+        {"date": "2026-08-19", "auto_confirm": True}, mid=31,
+    )
+    assert generated["placed"] == 1
+    confirm = generated["confirm"]
+    assert confirm["confirmed_count"] == 1
+    assert confirm["version"] == 1
+    assert confirm["notion_sync"] is None  # 测试环境无 Notion 源，静默跳过
+    assert "自动确认" in generated["message"]
+    # 二次调用幂等：已是确认状态，不再重复确认
+    again = call_tool(
+        client, session_id, "generate_tomorrow_plan",
+        {"date": "2026-08-19", "auto_confirm": True}, mid=32,
+    )
+    assert again["confirm"]["confirmed_count"] == 0
+    assert "已是确认状态" in again["message"]
+
+
+def test_mcp_adjust_plan_item_returns_message(client, db_session):
+    """adjust_plan_item 返回 message（含日历同步情况）；草案期不触发日历写入。"""
+    with db_session() as db:
+        course = Course(name="高等数学", tier="S")
+        db.add(course)
+        db.flush()
+        db.add(
+            CourseSession(
+                course_id=course.id, day_of_week=2, start_time="08:00", end_time="09:40", release_slot=0
+            )
+        )
+        db.commit()
+
+    session_id = handshake(client)
+    generated = call_tool(client, session_id, "generate_tomorrow_plan", {"date": "2026-08-19"}, mid=33)
+    assert generated["placed"] == 1
+    # 草案阶段：调整任一计划项（从数据库拿 id）
+    from backend.models import PlanItem
+
+    with db_session() as db:
+        target = db.query(PlanItem).filter(PlanItem.date == "2026-08-19").first()
+        target_id = target.id
+
+    adjusted = call_tool(
+        client, session_id, "adjust_plan_item",
+        {"item_id": target_id, "start_time": "20:00", "end_time": "21:00"}, mid=35,
+    )
+    assert adjusted["start_time"] == "20:00"
+    assert "notion_sync" not in adjusted  # 草案期不写日历
+    assert "已调整" in adjusted["message"]
+
+
 def test_mcp_tool_missing_required_param_rejected_by_sdk(client):
     """缺必填参数时由 SDK 参数校验层拒绝（返回 isError 的文本，不进入工具）。"""
     session_id = handshake(client)

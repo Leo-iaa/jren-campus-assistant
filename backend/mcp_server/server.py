@@ -48,6 +48,8 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
             "生成次日计划草案（默认明日，可指定日期 YYYY-MM-DD）。"
             "返回：date / placed（放置项数）/ dropped（放不下的项目）/ skipped（跳过的项目）/ "
             "preview（完整计划文本，含每项时间与确认状态，可直接推微信）。"
+            "auto_confirm=true 时生成后立即确认并写入 Notion 日历（免睡前确认，"
+            "返回 confirm 字段：confirmed_count / version / notion_sync）。"
         ),
     "get_today_plan_preview": (
         "获取今日计划文本（默认今天，可指定日期），适合直接推送微信。"
@@ -60,7 +62,8 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "adjust_plan_item": (
         "调整单个计划项：item_id + 新 start_time/end_time（HH:MM），可选新 title。"
-        "与同日其他项时间冲突会报错。"
+        "与同日其他项时间冲突会报错。若该日计划已确认，自动同步更新 Notion 日历"
+        "（返回 notion_sync 与 message）。"
     ),
     "get_courses": "查询课程列表（含 S/A/B/C 档位）。",
     "get_tasks": "查询作业任务列表，可按 status 过滤（todo/doing/done/cancelled）。",
@@ -125,23 +128,51 @@ def build_mcp_server(
 
     @server.tool(name="generate_tomorrow_plan", description=_TOOL_DESCRIPTIONS["generate_tomorrow_plan"])
     @safe
-    def generate_tomorrow_plan(date: str | None = None) -> str:
+    def generate_tomorrow_plan(date: str | None = None, auto_confirm: bool = False) -> str:
         plan_date = parse_date(date) if date else tomorrow()
+        confirm_payload: dict[str, Any] | None = None
         with session_scope() as db:
             result = generate_plan(db, plan_date)
             preview = preview_plan_text(db, plan_date)
-        return json.dumps(
-            {
-                "date": plan_date.isoformat(),
-                "placed": result.placed_count,
-                "dropped": result.dropped,
-                "skipped": result.skipped,
-                "preview": preview,
-                "message": f"已生成 {plan_date.isoformat()} 计划草案（{result.placed_count} 项）"
-                + ("；有放不下的项目，可手动调整" if result.dropped else ""),
-            },
-            ensure_ascii=False,
-        )
+            if auto_confirm:
+                # 免确认直达日历：生成后立即确认（draft→confirmed + 版本快照 + 写 Notion 日历）
+                notion_error: str | None = None
+                writer = None
+                try:
+                    writer = build_writer(db)
+                except NotionCalendarError as exc:
+                    notion_error = str(exc)
+                confirmed = confirm_plan(db, plan_date, calendar_writer=writer)
+                confirm_payload = {
+                    "confirmed_count": confirmed.confirmed_count,
+                    "version": confirmed.version,
+                    "notion_sync": confirmed.notion_sync,
+                }
+                if notion_error and confirm_payload["notion_sync"] is None:
+                    confirm_payload["notion_sync"] = {"error": notion_error}
+        payload: dict[str, Any] = {
+            "date": plan_date.isoformat(),
+            "placed": result.placed_count,
+            "dropped": result.dropped,
+            "skipped": result.skipped,
+            "preview": preview,
+        }
+        if auto_confirm:
+            payload["confirm"] = confirm_payload
+            confirmed_count = confirm_payload["confirmed_count"]
+            if confirmed_count > 0:
+                payload["message"] = (
+                    f"已生成并自动确认 {plan_date.isoformat()} 计划（{confirmed_count} 项），"
+                    "已写入 Notion 日历，无需再手动确认"
+                )
+            else:
+                payload["message"] = f"{plan_date.isoformat()} 计划已是确认状态，未重复处理"
+        else:
+            payload["message"] = (
+                f"已生成 {plan_date.isoformat()} 计划草案（{result.placed_count} 项）"
+                + ("；有放不下的项目，可手动调整" if result.dropped else "")
+            )
+        return json.dumps(payload, ensure_ascii=False)
 
     @server.tool(name="get_today_plan_preview", description=_TOOL_DESCRIPTIONS["get_today_plan_preview"])
     @safe
@@ -190,8 +221,31 @@ def build_mcp_server(
     def adjust_plan_item_tool(
         item_id: int, start_time: str, end_time: str, title: str | None = None
     ) -> str:
+        notion_error: str | None = None
+        writer = None
         with session_scope() as db:
-            item = adjust_plan_item(db, item_id, start_time, end_time, title)
+            try:
+                writer = build_writer(db)
+            except NotionCalendarError as exc:
+                notion_error = str(exc)
+            item = adjust_plan_item(
+                db, item_id, start_time, end_time, title, calendar_writer=writer
+            )
+        if notion_error and item.get("notion_sync") is None and "notion_sync" in item:
+            item["notion_sync"] = {"error": notion_error}
+        sync = item.get("notion_sync")
+        if sync is None:
+            item["message"] = f"已调整「{item['title']}」为 {item['start_time']}-{item['end_time']}"
+        elif "error" in sync:
+            item["message"] = (
+                f"已调整「{item['title']}」为 {item['start_time']}-{item['end_time']}"
+                f"（Notion 日历同步失败：{sync['error']}）"
+            )
+        else:
+            item["message"] = (
+                f"已调整「{item['title']}」为 {item['start_time']}-{item['end_time']}"
+                f"（Notion 日历同步：新建 {sync['created']} / 更新 {sync['updated']} / 不变 {sync['unchanged']}）"
+            )
         return json.dumps(item, ensure_ascii=False)
 
     @server.tool(name="mark_done", description=_TOOL_DESCRIPTIONS["mark_done"])
