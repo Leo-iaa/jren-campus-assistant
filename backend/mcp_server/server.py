@@ -45,9 +45,10 @@ from backend.mcp_server.service import (
 #: 工具说明（WorkBuddy 等客户端据此理解用法）
 _TOOL_DESCRIPTIONS: dict[str, str] = {
     "generate_tomorrow_plan": (
-        "生成次日计划草案（默认明日，可指定日期 YYYY-MM-DD）。"
-        "返回：date / placed（放置项数）/ dropped（放不下的项目）/ skipped（跳过的项目）。"
-    ),
+            "生成次日计划草案（默认明日，可指定日期 YYYY-MM-DD）。"
+            "返回：date / placed（放置项数）/ dropped（放不下的项目）/ skipped（跳过的项目）/ "
+            "preview（完整计划文本，含每项时间与确认状态，可直接推微信）。"
+        ),
     "get_today_plan_preview": (
         "获取今日计划文本（默认今天，可指定日期），适合直接推送微信。"
         "包含课程 / 作业 / 复习 / 杂项时间轴与确认状态。"
@@ -128,12 +129,14 @@ def build_mcp_server(
         plan_date = parse_date(date) if date else tomorrow()
         with session_scope() as db:
             result = generate_plan(db, plan_date)
+            preview = preview_plan_text(db, plan_date)
         return json.dumps(
             {
                 "date": plan_date.isoformat(),
                 "placed": result.placed_count,
                 "dropped": result.dropped,
                 "skipped": result.skipped,
+                "preview": preview,
                 "message": f"已生成 {plan_date.isoformat()} 计划草案（{result.placed_count} 项）"
                 + ("；有放不下的项目，可手动调整" if result.dropped else ""),
             },
