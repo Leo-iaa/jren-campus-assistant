@@ -11,15 +11,17 @@
 
 ## 📌 项目定位
 
-每天自动读取你的**课表、Notion 作业、Obsidian 笔记**，结合**艾宾浩斯遗忘曲线**和你自己的学习习惯，自动生成一张**合理且可执行**的时间表 —— 先给你过目确认，再写进日历。
+每天自动读取你的**课表、Notion 作业、Obsidian 笔记**，结合**艾宾浩斯遗忘曲线**和你自己的学习习惯，自动生成一张**合理且可执行**的时间表 —— 自动确认，直接写进日历，微信推送给你。
 
 ### 一天的典型闭环
 
-1. 🌙 **前一晚 21:00**：WorkBuddy 定时任务触发后端，自动读取当日数据（课表 / 新作业 / 新笔记），生成「明日计划」
-2. 🗓️ **计划写入 Notion Calendar**（原生日历，手机 / 电脑 / 平板三端同步）
-3. ☀️ **08:00**：微信收到「今日计划」推送（WorkBuddy 定时任务），Notion Calendar 同步展示事件
-4. 💬 **想调整 / 加任务？** 直接在 WorkBuddy / 微信里说：「把高数作业挪到晚上」「确认今天的计划」「有新任务：XXX，ddl 是明天」
-5. ✅ 确认后计划生效 → 完成情况自动记录 → 持续校准时间预估 —— **越用越懂你**
+1. 🌙 **前一晚 21:00**：WorkBuddy 定时任务触发后端，自动读取当日数据（课表 / 新作业 / 新笔记），生成「明日计划」并**自动确认写入 Notion Calendar**
+2. 🗓️ **计划已写入 Notion Calendar**（原生日历，手机 / 电脑 / 平板三端同步）
+3. ☀️ **08:00**：微信收到「今日计划」推送（WorkBuddy 定时任务 + wechat-clawbot-push 直推微信），含完整时间轴
+4. 💬 **临时改动 / 加任务？** 直接在微信里说：「把高数作业挪到晚上」「有新任务：XXX，ddl 是明天」→ 自动调整/添加，改动同步回 Notion 日历
+5. ✅ 完成情况自动记录 → 持续校准时间预估 —— **越用越懂你**
+
+> 想回到「先确认再写入」模式？给 `generate_tomorrow_plan` 传 `auto_confirm=false` 即可（默认行为）。
 
 ## ✨ 核心功能
 
@@ -30,7 +32,7 @@
 | 🧠 知识点智能提取 | LLM 自动把当天笔记切分为「知识点记忆单元」并评估难度 |
 | 📈 遗忘曲线复习调度 | 按课程档位（S/A/B/C，用户自设）与知识点难度自动安排复习，结合作业 deadline 反推优先级 |
 | 🗓️ 时间表约束规划 | 固定课程 + 可变任务 + 可用时间片，生成不冲突的日程草案 |
-| ✅ 用户确认机制 | 草案先呈现给你（Notion Calendar + WorkBuddy 对话），批准/调整后才写入日历 |
+| ✅ 计划自动确认 | 21:00 自动生成次日计划并确认写入 Notion Calendar（`auto_confirm`，Issue #58）；也可改回手动确认模式 |
 | 🔄 习惯自适应 | 持续记录「预估 vs 实际」耗时，按课程 × 时段 × 难度自动校准后续规划 |
 | 💡 主动建议 | 遗忘窗口提醒、任务过载建议拆分/延后、每日计划晨推 |
 
@@ -160,15 +162,18 @@ python -m pytest
 
 ### WorkBuddy 集成
 
-> ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，9 个工具，含 add_task），
+> ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，9 个工具，含 add_task / auto_confirm），
 > 完整配置见 [docs/mcp-server.md](docs/mcp-server.md)。
 
 1. 启动后端：`uvicorn backend.main:app --host 0.0.0.0 --port 8000`
 2. WorkBuddy（设置 → MCP 服务）添加 MCP Server：类型 **http**，地址 `http://127.0.0.1:8000/mcp`（同机部署）
-3. WorkBuddy 配置两个「自动化」定时任务：每天 21:00 → `generate_tomorrow_plan`；每天 08:00 → `get_today_plan_preview` 推微信
-4. 后端 APScheduler 21:00 自动生成次日计划（WorkBuddy 未触发也能跑，兜底）
-5. 确认计划自动写入 Notion Calendar（时段块事件；08:00 提醒以 WorkBuddy 微信推送为主）
-6. 手机微信远程操控 WorkBuddy，对话式确认 / 调整计划（微信通道双向能力以实测为准）
+3. **微信推送（实测方案）**：安装 `wechat-clawbot-push` 桥（PyPI，stdio MCP，暴露 `push_wechat_message`），
+   授权 token 后即可把自动化任务结果直推微信 ClawBot 聊天框（详见 [docs/mcp-server.md](docs/mcp-server.md) 5.1 节）
+4. WorkBuddy 配置两个「自动化」定时任务（均已实测跑通）：
+   - 每天 **21:00** → `generate_tomorrow_plan`（`auto_confirm=true` 自动确认写日历）→ `push_wechat_message` 推完整预览
+   - 每天 **08:00** → `get_today_plan_preview` → `push_wechat_message` 推今日时间轴
+5. 后端 APScheduler 21:00 自动生成次日计划兜底（WorkBuddy 未触发也能跑；兜底为草案，不自动确认）
+6. 手机微信远程操控：一句话加任务 / 改日程（`add_task` / `adjust_plan_item`，改动自动同步 Notion 日历）
 
 ## 🛠️ 开发流程约定
 
