@@ -755,41 +755,42 @@ def add_task(
             notion_sync = {"error": str(exc)}
 
     # 3. 计划联动
+    # ddl 紧迫（今天/明天）时尝试自动排入：优先排今天；今天已确认则排 ddl 当天；
+    # 目标日也已确认（锁定）则明确提示手动安排——避免「等下次 21:00 生成」落空
+    # （已确认日生成器会跳过，任务可能永远排不进去）。
     today = shanghai_today()
     iso = today.isoformat()
-    has_confirmed = (
-        db.query(PlanItem.id)
-        .filter(PlanItem.date == iso, PlanItem.status == "confirmed")
-        .first()
-    )
 
     placed_dict: dict | None = None
     if due_date is not None and due_date < iso:
         plan_action, plan_message = "deferred", "任务截止日期已过，不会自动安排，请手动处理"
-    elif has_confirmed is not None:
-        plan_action, plan_message = "deferred", (
-            "今天的计划已确认，不自动重排；新任务将在下次生成计划时自动纳入"
-            "（每晚 21:00 预生成次日计划）。如需今天就做，可回复「生成明天的计划」。"
-        )
     elif due_date is not None and due_date <= (today + timedelta(days=1)).isoformat():
-        # ddl 紧迫（今天/明天）：重排今日（复用生成器，替换 draft/adjusted 保留 done）
-        generate_plan(db, today)
-        placed = (
-            db.query(PlanItem)
-            .filter(
-                PlanItem.date == iso,
-                PlanItem.item_type == "task",
-                PlanItem.ref_id == task.id,
-            )
-            .first()
-        )
-        if placed is not None:
-            plan_action = "scheduled_today"
-            plan_message = f"已安排到今天 {placed.start_time}-{placed.end_time}"
-            placed_dict = _item_to_dict(placed)
+        target: date | None = None
+        if not _day_locked(db, today):
+            target = today
         else:
-            plan_action, plan_message = "deferred", (
-                "今天的时间排不下了，任务将在下次生成计划时优先纳入"
+            due = parse_date(due_date)
+            if due != today and not _day_locked(db, due):
+                target = due  # 今天已确认 → 尝试排进 ddl 当天
+        if target is not None:
+            placed_ok, placed_dict = _place_task_on(db, task, target)
+            if placed_ok:
+                when = "今天" if target == today else "明天"
+                plan_action = "scheduled_today" if target == today else "scheduled_tomorrow"
+                plan_message = (
+                    f"已把「{task.title}」安排到{when} "
+                    f"{placed_dict['start_time']}-{placed_dict['end_time']}"
+                )
+            else:
+                plan_action = "deferred"
+                when = "今天" if target == today else "明天"
+                plan_message = f"{when}的时间排不下了，任务将在下次生成计划时优先纳入"
+        else:
+            plan_action = "deferred"
+            locked = "今天和明天" if parse_date(due_date) != today else "今天的"
+            plan_message = (
+                f"{locked}的计划已确认锁定，不自动重排（保护已确认安排）；"
+                f"可回复「把「{task.title}」挪到 HH:MM」手动安排到具体时段"
             )
     else:
         plan_action, plan_message = "deferred", (
@@ -803,6 +804,37 @@ def add_task(
         plan_message=plan_message,
         placed=placed_dict,
     )
+
+
+def _day_locked(db: Session, day: date) -> bool:
+    """该日计划是否已确认锁定（存在 confirmed 项）。"""
+    return (
+        db.query(PlanItem.id)
+        .filter(PlanItem.date == day.isoformat(), PlanItem.status == "confirmed")
+        .first()
+        is not None
+    )
+
+
+def _place_task_on(db: Session, task: Task, day: date) -> tuple[bool, dict | None]:
+    """重排某天计划（替换 draft/adjusted，保留 done）并定位新任务落位。
+
+    返回 (是否排上, 计划项字典)。该天已确认时不重排（生成器幂等跳过），
+    由调用方保证只对未锁定日调用。
+    """
+    generate_plan(db, day)
+    placed = (
+        db.query(PlanItem)
+        .filter(
+            PlanItem.date == day.isoformat(),
+            PlanItem.item_type == "task",
+            PlanItem.ref_id == task.id,
+        )
+        .first()
+    )
+    return (placed is not None, _item_to_dict(placed) if placed else None)
+
+
 
 
 # ---------- 查询 ----------

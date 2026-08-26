@@ -555,7 +555,7 @@ def test_add_task_urgent_reorders_today(db_session, monkeypatch):
         assert result.plan_action == "scheduled_today"
         assert result.placed is not None
         assert result.placed["title"] == "实验报告"
-        assert "已安排到今天" in result.plan_message
+        assert "安排到今天" in result.plan_message
         # 落库完整：类型 + 截止日期
         task = db.get(Task, result.task["id"])
         assert task.task_type == "实验"
@@ -573,7 +573,7 @@ def test_add_task_urgent_tomorrow_also_reorders(db_session, monkeypatch):
 
 
 def test_add_task_respects_confirmed_plan(db_session, monkeypatch):
-    """今日计划已确认 → 不重排（保护已确认安排）。"""
+    """今日计划已确认 → 不重排（保护已确认安排），提示手动安排。"""
     today = _fixed_today(monkeypatch)
     with db_session() as db:
         seed_basic(db, today)
@@ -582,8 +582,30 @@ def test_add_task_respects_confirmed_plan(db_session, monkeypatch):
 
         result = add_task(db, title="新作业", due_date=today.isoformat())
         assert result.plan_action == "deferred"
-        assert "已确认" in result.plan_message
+        assert "已确认锁定" in result.plan_message
+        assert "挪到 HH:MM" in result.plan_message
         assert all(i.status == "confirmed" for i in plan_items(db, today))
+
+
+def test_add_task_schedules_ddl_day_when_today_locked(db_session, monkeypatch):
+    """今天已确认但 ddl 是明天（明天未确认）→ 自动排进明天（不再落空）。"""
+    today = _fixed_today(monkeypatch)
+    tomorrow_d = today + timedelta(days=1)
+    with db_session() as db:
+        seed_basic(db, today)
+        generate_plan(db, today)
+        confirm_plan(db, today, calendar_writer=None)  # 锁定今天
+
+        result = add_task(db, title="明天的事", due_date=tomorrow_d.isoformat())
+        assert result.plan_action == "scheduled_tomorrow"
+        assert result.placed is not None
+        assert result.placed["title"] == "明天的事"
+        assert "安排到明天" in result.plan_message
+        # 任务确实进了明天的计划
+        assert any(
+            i.title == "明天的事" and i.date == tomorrow_d.isoformat()
+            for i in db.query(PlanItem).all()
+        )
 
 
 def test_add_task_overdue_not_scheduled(db_session, monkeypatch):
