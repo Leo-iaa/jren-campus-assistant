@@ -125,36 +125,46 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 
 ### 4.8 WorkBuddy 定时任务（核心自动化）
 
-用 WorkBuddy 的**「自动化」**功能创建两个定时任务：
+> ✅ **微信推送已实测跑通**（2026-08-25）：安装 `wechat-clawbot-push` 桥后，自动化结果会**直接发到微信聊天窗口**（ClawBot），不用再走企业微信/小程序。
+
+**第一步：接通微信推送**（只需一次）
+1. 在 WorkBuddy 里安装 `wechat-clawbot-push`（PyPI 上的微信推送桥，stdio MCP，暴露 `push_wechat_message` 工具），并按它的说明注册到 MCP 配置
+2. 首次授权：让 WorkBuddy 调用 `acquire_token` 获取 token——**提示出现后立刻用手机微信给 ClawBot 发任意一条消息**（约 35 秒内），token 就绑定成功了
+3. 验证：让它发一条测试消息，微信收到即通 ✅（多个定时任务共用同一个 token）
+
+**第二步：创建两个定时任务**
 
 | 任务 | 触发时间 | 调用工具 | 效果 |
 |------|---------|---------|------|
-| 生成次日计划 | 每天 21:00 | `generate_tomorrow_plan` | 微信收到「明日计划已生成，记得睡前确认」 |
-| 推送今日计划 | 每天 08:00 | `get_today_plan_preview` | 微信收到今日完整时间表 |
+| 生成明日计划 | 每天 21:00 | `generate_tomorrow_plan`（auto_confirm=true） | **自动排好明天** + 写入 Notion 日历 + 微信收到完整时间表 |
+| 推送今日计划 | 每天 08:20 | `get_today_plan_preview` | 微信收到今日完整时间表 |
 
-建议的自动化指令文本（创建任务时填写）：
-
-```
-每天 21:00：调用 jren-campus-assistant 的 generate_tomorrow_plan 工具生成次日计划，
-把返回 JSON 里的 preview 字段（完整计划文本）原样推送给用户，开头加一句
-「明天的计划已生成，睡前记得确认」。若 preview 为空则推送 message 字段的内容。
-```
+建议的自动化指令文本（创建任务时填写，**已实测可用**）：
 
 ```
-每天 08:00：调用 get_today_plan_preview 工具，把返回的文本原样推送给我。
+每天 21:00：调用 jren-campus-assistant 的 generate_tomorrow_plan 工具（auto_confirm 设为 true）
+生成并自动确认次日计划，任务完成后把返回结果里 preview 字段的完整文本作为消息，
+调用 wechat-clawbot-push 的 push_wechat_message 工具推送到我的微信；
+如果 preview 为空，就把 message 字段的内容推送给我。
 ```
 
-> 💡 微信推送前，先在 WorkBuddy 里完成 IM 接入（微信 / 企业微信等）。
+```
+每天 08:20：调用 jren-campus-assistant 的 get_today_plan_preview 工具获取今日计划文本，
+把返回的文本作为消息，调用 wechat-clawbot-push 的 push_wechat_message 工具推送到我的微信。
+```
+
+> 21:00 任务里 `auto_confirm=true` 是**免确认**开关：生成后直接确认并写入 Notion 日历，
+> 不需要睡前手动确认了（Issue #58）。
 
 ---
 
 ## 5. 日常使用
 
 ```
-🌙 21:00  微信收到「明日计划已生成」
-          · 想调整：跟 WorkBuddy 说「把高数作业挪到晚上」
-          · 确认：说「确认明天的计划」→ 自动写入 Notion 日历
-☀️ 08:00  微信收到今日计划预览
+🌙 21:00  微信自动收到「明日计划」（已自动确认并写入 Notion 日历）
+          · 临时有事：跟 WorkBuddy 说「把高数作业挪到晚上」→ 调整同步到日历
+          · 新任务：说「有新任务：XXX，ddl 是明天」→ 自动入库并排日程
+☀️ 08:20  微信收到今日计划预览
 📱 白天   打开 Notion Calendar 看时间表；完成一项就跟 WorkBuddy 说「标记 XX 完成」
 🔄 长期   系统记录你的「预估 vs 实际」耗时，越用越准
 ```
@@ -163,10 +173,10 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 
 | 工具 | 作用 |
 |------|------|
-| `generate_tomorrow_plan` | 生成次日计划草案 |
+| `generate_tomorrow_plan` | 生成次日计划（`auto_confirm=true` 时自动确认并写日历，免睡前确认） |
 | `get_today_plan_preview` | 今日计划文本（微信友好） |
 | `confirm_plan` | 确认计划 → 写入 Notion 日历 |
-| `adjust_plan_item` | 调整单项时间 / 标题 |
+| `adjust_plan_item` | 调整单项时间 / 标题（已确认的日程会自动同步 Notion 日历） |
 | `add_task` | **一句话添加任务**（写本地 + Notion 任务库，自动排日程） |
 | `mark_done` | 标记完成（触发耗时校准） |
 | `get_courses` / `get_tasks` / `get_reviews` | 查询课程 / 作业 / 复习 |

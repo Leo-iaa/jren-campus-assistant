@@ -71,10 +71,10 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 | 工具 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `generate_tomorrow_plan` | `date?`（YYYY-MM-DD，默认明日） | JSON：placed / dropped / skipped | 生成计划草案（draft）。已确认的计划不自动重排 |
+| `generate_tomorrow_plan` | `date?`（YYYY-MM-DD，默认明日）、`auto_confirm?`（默认 false） | JSON：placed / dropped / skipped / preview / confirm? | 生成计划草案（draft）。`auto_confirm=true` 时生成后立即确认并写 Notion 日历（免睡前确认） |
 | `get_today_plan_preview` | `date?`（默认今日） | 纯文本 | 微信友好预览：时间轴 + 确认状态，适合 08:00 推送 |
 | `confirm_plan` | `date`（必填） | JSON：confirmed_count / version / notion_sync | 确认计划 → 版本快照 → 写 Notion 日历（时段块事件） |
-| `adjust_plan_item` | `item_id`、`start_time`、`end_time`、`title?` | JSON：更新后的计划项 | 调整单项时间/标题；冲突会报错 |
+| `adjust_plan_item` | `item_id`、`start_time`、`end_time`、`title?` | JSON：更新后的计划项 + notion_sync + message | 调整单项时间/标题；冲突会报错。**该日计划已确认时自动同步更新 Notion 日历**（Issue #58） |
 | `add_task` | `title`（必填）、`due_date?`、`task_type?`、`course_id?`、`estimated_minutes?` | JSON：task / plan_action / plan_message / notion_sync | **一句话添加任务**：写本地 + Notion 任务库，并联动今日计划（详见下） |
 | `mark_done` | `item_id`、`actual_minutes?` | JSON：计划项 + 校准记录 | 标记完成；task/review 记录「预估 vs 实际」校准 |
 | `get_courses` | 无 | JSON 数组 | 课程列表（含 S/A/B/C 档位） |
@@ -145,29 +145,44 @@ Notion 任务库写入为**尽力而为**：未配置任务库 / 写入失败不
 > 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址
 > `http://<电脑IP>:8000/mcp` 并确保防火墙放行 8000 端口、两端同一网络。
 
-## 5. WorkBuddy 定时任务配置（主通道）
+## 5. WorkBuddy 定时任务配置（主通道，已实测）
 
 用 WorkBuddy 的**「自动化」功能**创建两个定时任务（支持每日 / CRON 触发，可调用已连接的 MCP 工具）：
 
 | 定时任务 | 触发时间 | 调用工具 | 用途 |
 |----------|----------|----------|------|
-| 生成次日计划 | 每天 21:00 | `generate_tomorrow_plan` | 预生成明日计划草案 |
-| 推送计划预览 | 每天 08:00 | `get_today_plan_preview` | 把今日计划文本推到微信（方案 A 主提醒） |
+| 生成明日计划 | 每天 21:00 | `generate_tomorrow_plan`（`auto_confirm=true`） | 生成次日计划 → 自动确认 → 写 Notion 日历 → 推微信 |
+| 推送今日计划 | 每天 08:20 | `get_today_plan_preview` | 把今日计划文本直推微信（方案 A 主提醒） |
 
-建议的自动化指令文本（创建任务时填写，可按 WorkBuddy 的模板语言调整）：
-
-```
-每天 21:00：调用 jren-campus-assistant 的 generate_tomorrow_plan 工具生成次日计划，
-把返回 JSON 里的 preview 字段（完整计划文本）原样推送给用户，开头加一句
-「明天的计划已生成，睡前记得确认」。若 preview 为空则推送 message 字段的内容。
-```
+建议的自动化指令文本（已实测跑通，可直接使用）：
 
 ```
-每天 08:00：调用 get_today_plan_preview 工具，把返回的文本原样推送给我。
+每天 21:00：调用 jren-campus-assistant 的 generate_tomorrow_plan 工具（auto_confirm 设为 true）
+生成并自动确认次日计划，任务完成后把返回结果里 preview 字段的完整文本作为消息，
+调用 wechat-clawbot-push 的 push_wechat_message 工具推送到我的微信；
+如果 preview 为空，就把 message 字段的内容推送给我。
 ```
 
-> 💡 微信推送：先在 WorkBuddy 里完成 IM 接入（微信 / 企业微信等），
-> 08:00 任务的结果即可自动发到你的微信（手机远程触发同理）。
+```
+每天 08:20：调用 jren-campus-assistant 的 get_today_plan_preview 工具获取今日计划文本，
+把返回的文本作为消息，调用 wechat-clawbot-push 的 push_wechat_message 工具推送到我的微信。
+```
+
+### 5.1 微信直推（wechat-clawbot-push，实测方案）
+
+自动化结果直推**个人微信 ClawBot 聊天框**的实现（2026-08-25 实测通过）：
+
+1. **安装桥**：`wechat-clawbot-push` 是 PyPI 上的 stdio MCP 服务（v2.x），暴露
+   `push_wechat_message` 工具，专为 WorkBuddy 个人微信 ClawBot 定时主动推送设计。
+   在 WorkBuddy 中按其文档安装到隔离 venv，并注册进 `mcp.json`（stdio）
+2. **授权 token**：首次调用 `acquire_token` 是长轮询——按提示**立即用手机微信给
+   ClawBot 发任意一条文字消息**（约 35 秒窗口），token 会绑定到 `C:\Users\<user>\.workbuddy\wechat-clawbot-push\push_cache.json`
+3. **验证**：`bridge_status` 自检 token 有效，`--test` 或直接调 `push_wechat_message` 发一条测试消息；
+   多个自动化任务**复用同一个已缓存 token**，无需重复授权
+4. **推送**：自动化任务里把结果作为消息参数调 `push_wechat_message`，返回 HTTP 200 即成功
+
+> 与「推送到小程序」的区别：小程序是 WorkBuddy 自带开关（结果发到小程序）；ClawBot 推送达
+> 到**微信聊天窗口**本身。本项目实测方案走 ClawBot 直推。
 
 ## 6. 后端 21:00 兜底（APScheduler）
 
@@ -177,7 +192,8 @@ Notion 任务库写入为**尽力而为**：未配置任务库 / 写入失败不
 - 时区：Asia/Shanghai；错过触发点（如电脑休眠）1 小时内补跑
 - 开关与环境变量见第 8 节表格；启动日志会打印任务状态
 
-> 注意：兜底只生成草案，**确认与日历写入仍需用户操作**（WorkBuddy 对话确认或手动确认）。
+> 注意：兜底生成的是**草案**（不自动确认、不写日历）——自动确认由 WorkBuddy 定时任务
+> 的 `auto_confirm=true` 承担（避免未配置 Notion 时兜底静默写库）。
 
 ## 7. Notion Calendar 写入
 
@@ -263,10 +279,11 @@ Notion 任务库写入为**尽力而为**：未配置任务库 / 写入失败不
 
 | 日期 | 场景 | 通道 | 结果 | 备注 |
 |------|------|------|------|------|
-| 待实测 | 08:00 预览推送 | 单向 |  |  |
-| 待实测 | 21:00 生成提醒 | 单向 |  |  |
-| 待实测 | 微信回复「确认今天的计划」 | 双向 |  |  |
-| 待实测 | 微信回复「把高数作业挪到晚上」 | 双向 |  |  |
+| 2026-08-25 | 08:20 今日计划推送 | 单向（wechat-clawbot-push 直推 ClawBot） | ✅ 成功（HTTP 200） | 手动模拟触发验证；token 已缓存复用 |
+| 2026-08-25 | 21:00 生成明日计划推送 | 单向（wechat-clawbot-push 直推 ClawBot） | ✅ 成功（HTTP 200） | 手动模拟触发验证，preview 完整文本已送到微信 |
+| 待实测 | 微信回复「确认今天的计划」 | 双向 |  | 微信助理对话通道 |
+| 待实测 | 微信回复「把高数作业挪到晚上」 | 双向 |  | 调整后自动同步 Notion 日历 |
+| 待实测 | 微信回复「添加任务：XXX」 | 双向 |  | add_task 工具已就绪 |
 | 待实测 | 微信回复「标记高数作业完成」 | 双向 |  |  |
 
 ## 10. 常见问题（FAQ）

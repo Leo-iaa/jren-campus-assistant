@@ -35,7 +35,13 @@
   - `config_notion.bat` 扩展为三配置（令牌 / 日程库 / 任务库），支持回车沿用已有配置；粘贴**页面链接**自动解析页面内嵌数据库并让用户选择（实测任务库为页面内数据库）
   - 修复实测暴露的既有 bug：`generate_plan` 重排时删除先落地（flush），避免新草案与旧 draft 同 start_time 撞 UNIQUE(date, start_time)
   - 文档同步：mcp-server.md（9 工具 + add_task 语义 + 7.4 任务库节）/ USER_GUIDE.md / database.md / README
-  - pytest 新增 22 例（任务库 writer 12 + service add_task 9 + 端点 1），全量 239 例通过；本地真实闭环实测通过（微信路径 add_task → 本地 tasks + Notion 任务库 + 今日计划）
+    - pytest 新增 22 例（任务库 writer 12 + service add_task 9 + 端点 1），全量 239 例通过；本地真实闭环实测通过（微信路径 add_task → 本地 tasks + Notion 任务库 + 今日计划）
+  - 计划自动确认 + 调整同步日历 + WorkBuddy 微信推送文档（#58）：
+    - `generate_tomorrow_plan` 新增 `auto_confirm` 参数：true 时生成后立即确认（draft→confirmed + 版本快照 + 写 Notion 日历），幂等；21:00 定时任务免睡前确认直达日历
+    - `adjust_plan_item` 新增日历同步：该日计划已确认（已写日历）时增量幂等同步当日到 Notion 日历，返回 `notion_sync` + `message`；草案期不写、同步失败不阻断
+    - WorkBuddy 微信直推链路实测并写入文档：`wechat-clawbot-push` 桥（PyPI stdio MCP，`push_wechat_message`）→ 个人微信 ClawBot 聊天框；08:20 今日计划 / 21:00 明日计划（auto_confirm）两个定时任务实测推送成功
+    - docs/mcp-server.md「微信通道实测记录」更新（2026-08-25 单向推送 ✅）；README / USER_GUIDE 同步
+    - pytest 新增 5 例（service 3 + 端点 2），全量 244 例通过
 - Phase 1 后端核心（#7）：
   - SQLAlchemy 数据模型（11 张表，对齐 `docs/database.md` DDL，含 CHECK/UNIQUE 约束与外键级联）
   - FastAPI 应用骨架：pydantic-settings 配置管理、CORS、健康检查 `GET /health`
