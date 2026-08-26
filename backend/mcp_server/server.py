@@ -71,9 +71,9 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "add_task": (
         "添加任务（微信一句话加任务）：title 必填，due_date 可选（YYYY-MM-DD），"
         "task_type 可选（作业/实验/考试/其他），course_id 可选，estimated_minutes 可选（分钟）。"
-        "自动写入本地任务库与 Notion 任务库；ddl 紧迫（今天/明天）且今日计划未确认时"
-        "自动安排进今日计划，否则下次 21:00 生成计划时纳入。"
-        "返回：task / plan_message（是否已安排）/ notion_sync。"
+        "自动写入本地任务库与 Notion 任务库；无确认概念——无 ddl 或 ddl 是今天/明天的任务"
+        "直接增量插入对应日期的空闲时段（不动已有安排）并同步 Notion 日历；"
+        "ddl 更远则下次 21:00 生成时纳入。返回：task / plan_message / notion_sync。"
     ),
     "mark_done": (
         "标记计划项完成：item_id 必填，actual_minutes 为实际耗时（分钟，可选）。"
@@ -273,12 +273,17 @@ def build_mcp_server(
         estimated_minutes: int | None = None,
     ) -> str:
         notion_error: str | None = None
-        writer = None
+        task_writer = None
+        calendar_writer = None
         with session_scope() as db:
             try:
-                writer = build_task_writer(db)
+                task_writer = build_task_writer(db)
             except NotionTaskError as exc:
                 notion_error = str(exc)
+            try:
+                calendar_writer = build_writer(db)  # 排入日程后同步 Notion 日历
+            except NotionCalendarError as exc:
+                notion_error = notion_error or str(exc)
             result = add_task(
                 db,
                 title=title,
@@ -286,7 +291,8 @@ def build_mcp_server(
                 task_type=task_type,
                 course_id=course_id,
                 estimated_minutes=estimated_minutes,
-                task_writer=writer,
+                task_writer=task_writer,
+                calendar_writer=calendar_writer,
             )
         payload: dict[str, Any] = {
             "task": result.task,

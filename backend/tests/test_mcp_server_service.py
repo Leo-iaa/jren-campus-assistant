@@ -519,93 +519,92 @@ def _fixed_today(monkeypatch) -> date:
     return today
 
 
-def test_add_task_basic_defers_when_no_due_date(db_session, monkeypatch):
-    """无 ddl 的任务不挤占今天：落库 + 下次 21:00 生成时纳入。"""
+def test_add_task_no_due_date_inserts_today(db_session, monkeypatch):
+    """无 ddl 的任务直接插入今天（不等待、不确认），不动已有安排。"""
     today = _fixed_today(monkeypatch)
     with db_session() as db:
         seed_basic(db, today)
         generate_plan(db, today)
+        before = {(i.start_time, i.end_time) for i in plan_items(db, today)}
+
         result = add_task(db, title="背单词", estimated_minutes=30)
 
-        assert result.task["title"] == "背单词"
         assert result.task["status"] == "todo"
-        assert result.task["source"] == "manual"
-        assert result.task["task_type"] is None
-        assert result.plan_action == "deferred"
-        assert "21:00" in result.plan_message
-        assert result.placed is None
+        assert result.plan_action == "scheduled_today"
+        assert result.placed is not None and result.placed["title"] == "背单词"
+        assert "排进今天" in result.plan_message
         assert result.notion_sync is None
-        # 今日草案未被重排（无 ddl 不挤占今天）
-        assert not any(i.title == "背单词" for i in plan_items(db, today))
+        # 已排好的项一个没动（增量插入）
+        after = {(i.start_time, i.end_time) for i in plan_items(db, today) if i.title != "背单词"}
+        assert after == before
 
 
-def test_add_task_urgent_reorders_today(db_session, monkeypatch):
-    """ddl=今天且计划未确认 → 立即重排今日，任务出现在今天。"""
+def test_add_task_ddl_today_inserts_today(db_session, monkeypatch):
+    """ddl=今天 → 插入今天（类型/时长正确落库）。"""
     today = _fixed_today(monkeypatch)
     with db_session() as db:
         seed_basic(db, today)
         result = add_task(
-            db,
-            title="实验报告",
-            due_date=today.isoformat(),
-            task_type="实验",
-            estimated_minutes=60,
+            db, title="实验报告", due_date=today.isoformat(),
+            task_type="实验", estimated_minutes=60,
         )
-
         assert result.plan_action == "scheduled_today"
         assert result.placed is not None
-        assert result.placed["title"] == "实验报告"
-        assert "安排到今天" in result.plan_message
-        # 落库完整：类型 + 截止日期
+        assert "排进今天" in result.plan_message
         task = db.get(Task, result.task["id"])
-        assert task.task_type == "实验"
-        assert task.deadline == today.isoformat()
+        assert task.task_type == "实验" and task.deadline == today.isoformat()
 
 
-def test_add_task_urgent_tomorrow_also_reorders(db_session, monkeypatch):
-    """ddl=明天同样视为紧迫，重排今日（尽早安排）。"""
+def test_add_task_ddl_tomorrow_inserts_tomorrow(db_session, monkeypatch):
+    """ddl=明天 → 直接插入明天（不占用今天，也不等 21:00）。"""
     today = _fixed_today(monkeypatch)
+    tomorrow_d = today + timedelta(days=1)
     with db_session() as db:
         seed_basic(db, today)
-        result = add_task(db, title="明日截止作业", due_date=(today + timedelta(days=1)).isoformat())
-        assert result.plan_action == "scheduled_today"
-        assert result.placed is not None
+        result = add_task(db, title="明日截止作业", due_date=tomorrow_d.isoformat())
+        assert result.plan_action == "scheduled_tomorrow"
+        assert result.placed is not None and result.placed["title"] == "明日截止作业"
+        assert "排进明天" in result.plan_message
+        assert any(
+            i.date == tomorrow_d.isoformat() and i.title == "明日截止作业"
+            for i in db.query(PlanItem).all()
+        )
 
 
-def test_add_task_respects_confirmed_plan(db_session, monkeypatch):
-    """今日计划已确认 → 不重排（保护已确认安排），提示手动安排。"""
+def test_add_task_inserts_into_confirmed_day_without_touching_others(db_session, monkeypatch):
+    """今天计划已确认 → 新任务也直接插入（无确认概念），其它 confirmed 项不动。"""
     today = _fixed_today(monkeypatch)
     with db_session() as db:
         seed_basic(db, today)
         generate_plan(db, today)
         confirm_plan(db, today, calendar_writer=None)
+        before = {(i.start_time, i.end_time) for i in plan_items(db, today)}
 
-        result = add_task(db, title="新作业", due_date=today.isoformat())
-        assert result.plan_action == "deferred"
-        assert "已确认锁定" in result.plan_message
-        assert "挪到 HH:MM" in result.plan_message
-        assert all(i.status == "confirmed" for i in plan_items(db, today))
-
-
-def test_add_task_schedules_ddl_day_when_today_locked(db_session, monkeypatch):
-    """今天已确认但 ddl 是明天（明天未确认）→ 自动排进明天（不再落空）。"""
-    today = _fixed_today(monkeypatch)
-    tomorrow_d = today + timedelta(days=1)
-    with db_session() as db:
-        seed_basic(db, today)
-        generate_plan(db, today)
-        confirm_plan(db, today, calendar_writer=None)  # 锁定今天
-
-        result = add_task(db, title="明天的事", due_date=tomorrow_d.isoformat())
-        assert result.plan_action == "scheduled_tomorrow"
+        result = add_task(db, title="临时加的事", due_date=today.isoformat(), estimated_minutes=30)
+        assert result.plan_action == "scheduled_today"
         assert result.placed is not None
-        assert result.placed["title"] == "明天的事"
-        assert "安排到明天" in result.plan_message
-        # 任务确实进了明天的计划
-        assert any(
-            i.title == "明天的事" and i.date == tomorrow_d.isoformat()
-            for i in db.query(PlanItem).all()
+        items = plan_items(db, today)
+        new_items = [i for i in items if i.title == "临时加的事"]
+        assert len(new_items) == 1
+        assert new_items[0].status == "confirmed"  # 与当日状态一致
+        assert {(i.start_time, i.end_time) for i in items if i.title != "临时加的事"} == before
+
+
+def test_add_task_slot_full_reports(db_session, monkeypatch):
+    """目标日 8:00-22:00 无空闲时段 → 明确提示排不下+引导手动安排。"""
+    today = _fixed_today(monkeypatch)
+    with db_session() as db:
+        db.add(
+            PlanItem(
+                date=today.isoformat(), start_time="08:00", end_time="22:00",
+                item_type="misc", ref_id=None, title="全天占位", status="confirmed",
+            )
         )
+        db.commit()
+        result = add_task(db, title="挤不进去的事", estimated_minutes=30)
+        assert result.plan_action == "deferred"
+        assert "排不下了" in result.plan_message
+        assert "挪到 HH:MM" in result.plan_message
 
 
 def test_add_task_overdue_not_scheduled(db_session, monkeypatch):

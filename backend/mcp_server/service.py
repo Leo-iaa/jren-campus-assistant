@@ -696,15 +696,20 @@ def add_task(
     course_id: int | None = None,
     estimated_minutes: int | None = None,
     task_writer=None,
+    calendar_writer=None,
 ) -> AddTaskResult:
-    """添加任务：本地落库 → 写 Notion 任务库 → 与当日计划联动。
+    """添加任务：本地落库 → 写 Notion 任务库 → 直接排进日程（无确认概念）。
 
     - 本地 tasks 表必写（source='manual'，status='todo'）
     - Notion 任务库写入尽力而为：未配置 / 失败不阻断，结果写入 ``notion_sync``
     - 计划联动（设计理由见 docs/mcp-server.md「add_task」）：
-      · ddl ≤ 明天 且 今日计划未确认 → 立即重排今日（复用 generate_plan，幂等）
-      · 今日计划已确认 → 不重排（保护已确认安排），提示下次生成时纳入
-      · ddl 更远 / 无 ddl / 已过期 → 不挤占今天，下次 21:00 生成时自然纳入
+      · 无 ddl 或 ddl 是今天 → 直接**增量插入**今天（找空闲时段，不动已有安排，
+        即使今天计划已确认；插入后同步 Notion 日历）
+      · ddl 是明天 → 直接插入明天（同样不锁）
+      · ddl 更远 → 不占位，下次 21:00 生成时自动纳入（每晚生成次日并 auto_confirm）
+      · 已过期 → 不自动排，提示手动处理
+      ``calendar_writer`` 注入 Notion 日历写入器：插入后若目标日已确认（已写日历）
+      则增量同步当日，失败不阻断。
     """
     title = (title or "").strip()
     if not title:
@@ -754,47 +759,49 @@ def add_task(
         except Exception as exc:  # noqa: BLE001 —— 任务库写入尽力而为
             notion_sync = {"error": str(exc)}
 
-    # 3. 计划联动
-    # ddl 紧迫（今天/明天）时尝试自动排入：优先排今天；今天已确认则排 ddl 当天；
-    # 目标日也已确认（锁定）则明确提示手动安排——避免「等下次 21:00 生成」落空
-    # （已确认日生成器会跳过，任务可能永远排不进去）。
+    # 3. 计划联动（直接插入，无「确认/锁定」概念）
+    # 目标日：无 ddl → 今天；ddl 今天 → 今天；ddl 明天 → 明天；
+    # 更远 → 不占位（每晚 21:00 生成次日时自动纳入）。插入为增量方式：
+    # 找目标日空闲时段安插，不动已排好的其它安排；目标日已写日历则同步 Notion。
     today = shanghai_today()
     iso = today.isoformat()
+    task_minutes = _clamp_duration(
+        task.estimated_minutes,
+        int(_get_setting(db, "task_duration_minutes", str(DEFAULT_TASK_MINUTES))),
+    )
 
     placed_dict: dict | None = None
     if due_date is not None and due_date < iso:
         plan_action, plan_message = "deferred", "任务截止日期已过，不会自动安排，请手动处理"
-    elif due_date is not None and due_date <= (today + timedelta(days=1)).isoformat():
-        target: date | None = None
-        if not _day_locked(db, today):
-            target = today
-        else:
-            due = parse_date(due_date)
-            if due != today and not _day_locked(db, due):
-                target = due  # 今天已确认 → 尝试排进 ddl 当天
-        if target is not None:
-            placed_ok, placed_dict = _place_task_on(db, task, target)
-            if placed_ok:
-                when = "今天" if target == today else "明天"
-                plan_action = "scheduled_today" if target == today else "scheduled_tomorrow"
-                plan_message = (
-                    f"已把「{task.title}」安排到{when} "
-                    f"{placed_dict['start_time']}-{placed_dict['end_time']}"
-                )
-            else:
-                plan_action = "deferred"
-                when = "今天" if target == today else "明天"
-                plan_message = f"{when}的时间排不下了，任务将在下次生成计划时优先纳入"
+    elif due_date is None or due_date <= (today + timedelta(days=1)).isoformat():
+        target = parse_date(due_date) if due_date is not None else today
+        if target < today:
+            target = today  # 防御：ddl 早于今天的日期不越界
+        when = "今天" if target == today else "明天"
+        item = _insert_task_into_day(db, task, target, task_minutes)
+        if item is not None:
+            placed_dict = _item_to_dict(item)
+            plan_action = "scheduled_today" if target == today else "scheduled_tomorrow"
+            plan_message = f"已把「{task.title}」排进{when} {item.start_time}-{item.end_time}"
+            # 目标日已确认（已写日历）→ 增量同步 Notion 日历
+            if calendar_writer is not None and _day_locked(db, target):
+                try:
+                    sync = calendar_writer.sync_plan_to_calendar(db, target)
+                    plan_message += (
+                        f"（Notion 日历同步：新建 {sync.created} / 更新 {sync.updated} / "
+                        f"不变 {sync.unchanged}）"
+                    )
+                except Exception as exc:  # noqa: BLE001 —— 日历同步尽力而为
+                    plan_message += f"（Notion 日历同步失败：{exc}）"
         else:
             plan_action = "deferred"
-            locked = "今天和明天" if parse_date(due_date) != today else "今天的"
             plan_message = (
-                f"{locked}的计划已确认锁定，不自动重排（保护已确认安排）；"
-                f"可回复「把「{task.title}」挪到 HH:MM」手动安排到具体时段"
+                f"{when}的时间排不下了（{task_minutes} 分钟内无空闲时段），"
+                f"可回复「把「{task.title}」挪到 HH:MM」手动安排"
             )
     else:
         plan_action, plan_message = "deferred", (
-            "任务已添加，将在下次生成计划时自动纳入（每晚 21:00 预生成次日计划）"
+            "任务已添加，将在下次生成计划时自动纳入（每晚 21:00 预生成次日计划并自动确认）"
         )
 
     return AddTaskResult(
@@ -816,23 +823,74 @@ def _day_locked(db: Session, day: date) -> bool:
     )
 
 
-def _place_task_on(db: Session, task: Task, day: date) -> tuple[bool, dict | None]:
-    """重排某天计划（替换 draft/adjusted，保留 done）并定位新任务落位。
+def _find_free_slot(
+    db: Session,
+    day: date,
+    minutes: int,
+    start_limit: time = time(8, 0),
+    end_limit: time = time(22, 0),
+) -> tuple[time, time] | None:
+    """在 8:00-22:00 找一段与已有计划项不冲突的空闲时段（贪心最早适配）。
 
-    返回 (是否排上, 计划项字典)。该天已确认时不重排（生成器幂等跳过），
-    由调用方保证只对未锁定日调用。
+    返回 (开始, 结束) 或 None（放不下）。
     """
-    generate_plan(db, day)
-    placed = (
+    items = (
         db.query(PlanItem)
-        .filter(
-            PlanItem.date == day.isoformat(),
-            PlanItem.item_type == "task",
-            PlanItem.ref_id == task.id,
-        )
-        .first()
+        .filter(PlanItem.date == day.isoformat())
+        .order_by(PlanItem.start_time)
+        .all()
     )
-    return (placed is not None, _item_to_dict(placed) if placed else None)
+    busy = sorted((parse_hhmm(i.start_time), parse_hhmm(i.end_time)) for i in items)
+    cursor = start_limit
+    for s, e in busy:
+        if e <= cursor:
+            continue
+        if s > cursor:
+            gap = (s.hour * 60 + s.minute) - (cursor.hour * 60 + cursor.minute)
+            if gap >= minutes:
+                return cursor, _add_minutes(cursor, minutes)
+        cursor = max(cursor, e)
+        if cursor >= end_limit:
+            break
+    if (end_limit.hour * 60 + end_limit.minute) - (cursor.hour * 60 + cursor.minute) >= minutes:
+        return cursor, _add_minutes(cursor, minutes)
+    return None
+
+
+def _add_minutes(t: time, minutes: int) -> time:
+    """time 加法（分钟），调用方保证结果在合理日内范围。"""
+    total = t.hour * 60 + t.minute + minutes
+    return time(total // 60, total % 60)
+
+
+def _insert_task_into_day(
+    db: Session,
+    task: Task,
+    day: date,
+    task_minutes: int,
+) -> PlanItem | None:
+    """增量把任务插入某天计划：找空闲时段安插，**不动已排好的其它项**。
+
+    插入项状态与当日一致（该日已确认 → confirmed，否则 draft）——
+    用户无需确认，插入后由调用方同步 Notion 日历。放不下返回 None。
+    """
+    slot = _find_free_slot(db, day, task_minutes)
+    if slot is None:
+        return None
+    start, end = slot
+    item = PlanItem(
+        date=day.isoformat(),
+        start_time=start.strftime("%H:%M"),
+        end_time=end.strftime("%H:%M"),
+        item_type="task",
+        ref_id=task.id,
+        title=task.title,
+        status="confirmed" if _day_locked(db, day) else "draft",
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
 
 
 
