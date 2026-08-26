@@ -590,6 +590,66 @@ def test_add_task_inserts_into_confirmed_day_without_touching_others(db_session,
         assert {(i.start_time, i.end_time) for i in items if i.title != "临时加的事"} == before
 
 
+def test_add_task_evicts_later_deadline_when_full(db_session, monkeypatch):
+    """今天排满 + 新任务今晚 ddl → 把 ddl 更晚的已排任务顺延到其 ddl 当天，腾位插入。"""
+    today = _fixed_today(monkeypatch)
+    tomorrow = today + timedelta(days=1)
+    with db_session() as db:
+        later = Task(title="明天截止的任务", deadline=tomorrow.isoformat(), source="manual", status="todo")
+        db.add(later)
+        db.flush()
+        db.add(PlanItem(date=today.isoformat(), start_time="08:00", end_time="18:00",
+                        item_type="misc", ref_id=None, title="白天满课", status="confirmed"))
+        db.add(PlanItem(date=today.isoformat(), start_time="18:00", end_time="20:00",
+                        item_type="task", ref_id=later.id, title="明天截止的任务", status="confirmed"))
+        db.add(PlanItem(date=today.isoformat(), start_time="20:00", end_time="22:00",
+                        item_type="misc", ref_id=None, title="晚间安排", status="confirmed"))
+        db.commit()  # 今天 8:00-22:00 无 60 分钟空档
+
+        result = add_task(db, title="今晚的急事", due_date=today.isoformat(), estimated_minutes=60)
+
+        assert result.plan_action == "scheduled_today"
+        assert result.placed is not None and result.placed["title"] == "今晚的急事"
+        assert "顺延" in result.plan_message
+        assert len(result.evicted) == 1
+        assert result.evicted[0]["title"] == "明天截止的任务"
+        # 急事在今天，明天截止的任务在明天
+        today_items = [(i.title, i.start_time, i.status) for i in plan_items(db, today)]
+        assert ("今晚的急事", "18:00", "confirmed") in today_items
+        assert not any(i.title == "明天截止的任务" for i in plan_items(db, today))
+        tomorrow_items = [(i.title, i.start_time) for i in plan_items(db, tomorrow)]
+        assert ("明天截止的任务", "08:00") in tomorrow_items
+        # 其它项（白天满课/晚间安排）原样保留
+        assert ("白天满课", "08:00", "confirmed") in today_items
+        assert ("晚间安排", "20:00", "confirmed") in today_items
+
+
+def test_add_task_evicts_keeps_course_and_no_ddl_untouched(db_session, monkeypatch):
+    """腾挪只动 task：课程、无 ddl 任务不挪；新任务无 ddl 时不腾挪。"""
+    today = _fixed_today(monkeypatch)
+    tomorrow = today + timedelta(days=1)
+    with db_session() as db:
+        later = Task(title="后天才交的作业", deadline=(tomorrow + timedelta(days=1)).isoformat(), source="manual", status="todo")
+        noddl = Task(title="无 ddl 的任务", deadline=None, source="manual", status="todo")
+        db.add_all([later, noddl])
+        db.flush()
+        db.add(PlanItem(date=today.isoformat(), start_time="08:00", end_time="18:00",
+                        item_type="course", ref_id=None, title="必修课", status="confirmed"))
+        db.add(PlanItem(date=today.isoformat(), start_time="18:00", end_time="20:00",
+                        item_type="task", ref_id=later.id, title="后天才交的作业", status="confirmed"))
+        db.add(PlanItem(date=today.isoformat(), start_time="20:00", end_time="22:00",
+                        item_type="task", ref_id=noddl.id, title="无 ddl 的任务", status="confirmed"))
+        db.commit()
+
+        # 新任务有 ddl（今天）→ 腾挪后天任务（无 ddl 任务不挪，课程不挪）
+        result = add_task(db, title="今晚的急事", due_date=today.isoformat(), estimated_minutes=60)
+        assert result.plan_action == "scheduled_today"
+        evicted_titles = {e["title"] for e in result.evicted}
+        assert evicted_titles == {"后天才交的作业"}
+        assert any(i.title == "必修课" for i in plan_items(db, today))
+        assert any(i.title == "无 ddl 的任务" and i.date == today.isoformat() for i in db.query(PlanItem).all())
+
+
 def test_add_task_slot_full_reports(db_session, monkeypatch):
     """目标日 8:00-22:00 无空闲时段 → 明确提示排不下+引导手动安排。"""
     today = _fixed_today(monkeypatch)
