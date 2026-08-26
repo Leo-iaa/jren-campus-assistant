@@ -682,9 +682,10 @@ class AddTaskResult:
 
     task: dict
     notion_sync: dict | None = None  # 任务库写入结果或错误信息
-    plan_action: str = "deferred"  # scheduled_today / deferred
+    plan_action: str = "deferred"  # scheduled_today / scheduled_tomorrow / deferred
     plan_message: str = ""  # 计划联动中文说明
-    placed: dict | None = None  # 排到今天的计划项（若有）
+    placed: dict | None = None  # 排到目标日的计划项（若有）
+    evicted: list[dict] = field(default_factory=list)  # 腾挪顺延的旧计划项（title/从哪天到哪天）
 
 
 def add_task(
@@ -771,6 +772,7 @@ def add_task(
     )
 
     placed_dict: dict | None = None
+    evicted: list[dict] = []
     if due_date is not None and due_date < iso:
         plan_action, plan_message = "deferred", "任务截止日期已过，不会自动安排，请手动处理"
     elif due_date is None or due_date <= (today + timedelta(days=1)).isoformat():
@@ -778,25 +780,35 @@ def add_task(
         if target < today:
             target = today  # 防御：ddl 早于今天的日期不越界
         when = "今天" if target == today else "明天"
-        item = _insert_task_into_day(db, task, target, task_minutes)
+        # 插入 + 排满时按 ddl 动态腾挪（把 ddl 更晚的已排任务顺延到其 ddl 当天）
+        item, touched_days, evicted = _insert_with_eviction(
+            db, task, target, task_minutes
+        )
         if item is not None:
             placed_dict = _item_to_dict(item)
             plan_action = "scheduled_today" if target == today else "scheduled_tomorrow"
             plan_message = f"已把「{task.title}」排进{when} {item.start_time}-{item.end_time}"
-            # 目标日已确认（已写日历）→ 增量同步 Notion 日历
-            if calendar_writer is not None and _day_locked(db, target):
-                try:
-                    sync = calendar_writer.sync_plan_to_calendar(db, target)
-                    plan_message += (
-                        f"（Notion 日历同步：新建 {sync.created} / 更新 {sync.updated} / "
-                        f"不变 {sync.unchanged}）"
-                    )
-                except Exception as exc:  # noqa: BLE001 —— 日历同步尽力而为
-                    plan_message += f"（Notion 日历同步失败：{exc}）"
+            for ev in evicted:
+                plan_message += (
+                    f"；已把「{ev['title']}」顺延到{ev['to'][:10]} {ev['to'][11:]}（原本排在{ev['from']}）"
+                )
+            # 涉及日已确认（已写日历）→ 增量同步 Notion 日历
+            if calendar_writer is not None:
+                for d in touched_days:
+                    if _day_locked(db, d):
+                        try:
+                            sync = calendar_writer.sync_plan_to_calendar(db, d)
+                            plan_message += (
+                                f"（{d.isoformat()} 日历同步：新建 {sync.created} / "
+                                f"更新 {sync.updated} / 不变 {sync.unchanged}）"
+                            )
+                        except Exception as exc:  # noqa: BLE001 —— 日历同步尽力而为
+                            plan_message += f"（{d.isoformat()} 日历同步失败：{exc}）"
         else:
             plan_action = "deferred"
             plan_message = (
-                f"{when}的时间排不下了（{task_minutes} 分钟内无空闲时段），"
+                f"{when}的时间排不下了（{task_minutes} 分钟内无空闲时段，"
+                "也没有可顺延的任务），"
                 f"可回复「把「{task.title}」挪到 HH:MM」手动安排"
             )
     else:
@@ -810,6 +822,7 @@ def add_task(
         plan_action=plan_action,
         plan_message=plan_message,
         placed=placed_dict,
+        evicted=evicted,
     )
 
 
@@ -891,6 +904,74 @@ def _insert_task_into_day(
     db.commit()
     db.refresh(item)
     return item
+
+
+def _hhmm_duration(start: time, end: time) -> int:
+    """HH:MM 时间段长度（分钟）。"""
+    return (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute)
+
+
+def _insert_with_eviction(
+    db: Session,
+    task: Task,
+    day: date,
+    task_minutes: int,
+) -> tuple[PlanItem | None, list[date], list[dict]]:
+    """把任务插入目标日；**目标日排满时按 ddl 动态腾挪**（Issue #58）。
+
+    腾挪规则（只适用于新任务有 ddl 的急事）：
+    1. 找出目标日已排**任务**里 ddl **晚于**新任务 ddl 的（不紧迫的让位给紧迫的）
+    2. 按 ddl 从晚到早尝试，把该任务**顺延到它自己的 ddl 当天**（找得到空档才挪）
+    3. 腾出空间后插入新任务；仍放不下则放弃（不动任何安排）
+
+    返回 (插入项或 None, 涉及的日期列表[用于日历同步], 顺延记录列表)。
+    只动 task 类型的计划项；课程 / 复习 / 杂项永不挪动。
+    """
+    touched: list[date] = [day]
+    evicted: list[dict] = []
+    item = _insert_task_into_day(db, task, day, task_minutes)
+    if item is not None:
+        return item, touched, evicted
+    if task.deadline is None:
+        return None, touched, evicted  # 无 ddl 不腾挪（没有可顺延的落点依据）
+
+    candidates = []
+    items = (
+        db.query(PlanItem)
+        .filter(PlanItem.date == day.isoformat(), PlanItem.item_type == "task")
+        .all()
+    )
+    for pi in items:
+        t = db.get(Task, pi.ref_id) if pi.ref_id is not None else None
+        if t is not None and t.deadline is not None and t.deadline > task.deadline:
+            candidates.append((t.deadline, pi))
+    for _deadline, pi in sorted(candidates, reverse=True):  # ddl 最晚的先挪
+        target_day = parse_date(_deadline)
+        if target_day <= day:
+            continue
+        dur = _hhmm_duration(parse_hhmm(pi.start_time), parse_hhmm(pi.end_time))
+        slot = _find_free_slot(db, target_day, dur)
+        if slot is None:
+            continue  # 该任务 ddl 当天也排满 → 换下一个候选
+        start, end = slot
+        old_date, old_time = pi.date, f"{pi.start_time}-{pi.end_time}"
+        pi.date = target_day.isoformat()
+        pi.start_time = start.strftime("%H:%M")
+        pi.end_time = end.strftime("%H:%M")
+        db.commit()
+        if target_day not in touched:
+            touched.append(target_day)
+        evicted.append(
+            {
+                "title": pi.title,
+                "from": f"{old_date} {old_time}",
+                "to": f"{target_day.isoformat()} {pi.start_time}-{pi.end_time}",
+            }
+        )
+        item = _insert_task_into_day(db, task, day, task_minutes)
+        if item is not None:
+            return item, touched, evicted
+    return None, touched, evicted
 
 
 

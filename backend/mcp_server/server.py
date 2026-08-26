@@ -299,6 +299,7 @@ def build_mcp_server(
             "plan_action": result.plan_action,
             "plan_message": result.plan_message,
             "placed": result.placed,
+            "evicted": result.evicted,
             "notion_sync": result.notion_sync,
         }
         if notion_error and payload["notion_sync"] is None:
