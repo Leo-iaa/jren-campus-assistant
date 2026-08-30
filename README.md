@@ -34,6 +34,7 @@
 | 🗓️ 时间表约束规划 | 固定课程 + 可变任务 + 可用时间片，生成不冲突的日程草案 |
 | ✅ 计划自动确认 | 21:00 自动生成次日计划并确认写入 Notion Calendar（`auto_confirm`，Issue #58）；也可改回手动确认模式 |
 | 🔄 习惯自适应 | 持续记录「预估 vs 实际」耗时，按课程 × 时段 × 难度自动校准后续规划 |
+| 🧑 用户画像 | 记录作息 / 效率偏好 / 生活规律；从调整、完成、新增任务的行为中自动学习（如「连续 3 次把高数挪到晚上 → 高数优先排晚上」），规划时按画像智能安排，可对话查看/修改（Issue #63） |
 | 💡 主动建议 | 遗忘窗口提醒、任务过载建议拆分/延后、每日计划晨推 |
 
 ## 🧱 技术架构
@@ -45,12 +46,13 @@
 │  └─ AI 交互：WorkBuddy + 微信（对话确认/调整/查询）    │
 ├─────────────────────────────────────────────────┤
 │  后端：Python FastAPI                            │
-│  ├─ MCP Server 暴露层（对接 WorkBuddy，9 个工具）     │
+│  ├─ MCP Server 暴露层（对接 WorkBuddy，11 个工具）     │
 │  ├─ MCP 客户端层（Notion/Obsidian/iCal）         │
 │  ├─ 知识提取层（LLM 抽取知识点与难度）            │
 │  ├─ 遗忘曲线调度器（复习间隔算法）                │
 │  ├─ 时间表规划器（约束求解 + LLM 编排）           │
 │  ├─ 自适应校准模块（耗时学习与修正）              │
+│  ├─ 用户画像模块（习惯记录 + 行为自动学习）       │
 │  ├─ 定时任务（21:00 生成+08:00 微信推送）        │
 │  └─ 数据库：SQLite（单用户起步）                 │
 ├─────────────────────────────────────────────────┤
@@ -94,7 +96,7 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | **Phase 0 · 设计** | 需求、架构、数据库设计 | ✅ 已完成 |
-| **Phase 1 · 核心** | 后端 11 表模型 / CRUD API / 调度算法 / MCP 接入 / 215 例测试 | ✅ 已完成 |
+| **Phase 1 · 核心** | 后端 13 表模型 / CRUD API / 调度算法 / MCP 接入 / 290 例测试 | ✅ 已完成 |
 | **Phase 1.5 · 载体集成** | MCP Server 暴露层 / WorkBuddy 对接 / Notion Calendar 写入 / 21:00 定时任务 | ✅ 已完成 |
 | **Phase 2 · 自适应** | 校准数据回流、提醒完善、云端部署准备 | ⏳ 待启动 |
 | **Phase 3 · 扩展** | 多用户、手机推送、更多数据源 | ⏳ 待定 |
@@ -105,13 +107,13 @@
 jren-campus-assistant/
 ├── backend/           # FastAPI 后端
 │   ├── api/           # 路由层：健康检查 + 基础 CRUD + 数据源同步/OAuth
-│   ├── models/        # SQLAlchemy 数据模型（11 张表）
+│   ├── models/        # SQLAlchemy 数据模型（13 张表）
 │   ├── schemas/       # Pydantic 请求/响应模型（校验与枚举）
-│   ├── scheduler/     # 遗忘曲线 + 时间表规划 + 习惯校准（已实现）
+│   ├── scheduler/     # 遗忘曲线 + 时间表规划 + 习惯校准 + 用户画像学习（已实现）
 │   ├── mcp_client/    # MCP 数据接入层（Notion / Obsidian / iCal adapter）
-│   ├── mcp_server/    # MCP Server 暴露层（WorkBuddy 接入：9 工具 + 定时任务 + Notion 日历/任务库写入）
+│   ├── mcp_server/    # MCP Server 暴露层（WorkBuddy 接入：11 工具 + 定时任务 + Notion 日历/任务库写入 + 用户画像）
 │   ├── scripts/       # 工具脚本（init_db.py 数据库初始化）
-│   ├── tests/         # pytest 测试（212 例）
+│   ├── tests/         # pytest 测试（290 例）
 │   └── data/          # SQLite 数据库文件（运行时生成，不入库）
 ├── docs/              # 设计文档
 └── README.md
@@ -119,7 +121,7 @@ jren-campus-assistant/
 
 ## 🔒 隐私与数据
 
-- **数据全本地**：所有数据（课表、计划、复习记录、习惯校准）存放在你自己机器上的 SQLite 文件（`backend/data/`），不入库、不上传、不采集
+- **数据全本地**：所有数据（课表、计划、复习记录、习惯校准、用户画像）存放在你自己机器上的 SQLite 文件（`backend/data/`），不入库、不上传、不采集
 - **密钥自配**：Notion 集成令牌等凭据通过本地脚本（`backend/scripts/config_notion.bat`）配置，只保存在你本机，代码仓库中不含任何硬编码密钥
 - **部署者须知**：请勿将 `.env`、数据库文件、日志提交到任何仓库；公开仓库中的令牌/密钥一经发布即视为泄露
 - 项目为**单用户设计**，数据互不可见；多用户支持见 [开发路线](#-开发路线) Phase 3
@@ -162,7 +164,7 @@ python -m pytest
 
 ### WorkBuddy 集成
 
-> ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，9 个工具，含 add_task / auto_confirm），
+> ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，11 个工具，含 add_task / auto_confirm / get_user_profile），
 > 完整配置见 [docs/mcp-server.md](docs/mcp-server.md)。
 
 1. 启动后端：`uvicorn backend.main:app --host 0.0.0.0 --port 8000`

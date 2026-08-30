@@ -18,7 +18,7 @@
 WorkBuddy（MCP 客户端，微信远程）
    │  Streamable HTTP：http://127.0.0.1:8000/mcp（方案 A 同机）
    ▼
-backend/mcp_server/server.py    ← 9 个 MCP 工具（薄封装）
+backend/mcp_server/server.py    ← 11 个 MCP 工具（薄封装）
    ▼
 backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/完成/查询/添加任务）
    ├── backend/scheduler/       ← 遗忘曲线 + 时间表规划器 + 校准（纯算法）
@@ -67,7 +67,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 > 注意：vbs 引用的是仓库的**绝对路径**；若仓库被移动，需同步更新 vbs 中的路径。
 
-## 3. 工具清单（9 个）
+## 3. 工具清单（11 个）
 
 | 工具 | 参数 | 返回 | 说明 |
 |------|------|------|------|
@@ -80,6 +80,8 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 | `get_courses` | 无 | JSON 数组 | 课程列表（含 S/A/B/C 档位） |
 | `get_tasks` | `status?`（todo/doing/done/cancelled） | JSON 数组 | 作业任务列表（含类型 task_type） |
 | `get_reviews` | `due_date?`（YYYY-MM-DD） | JSON 数组 | 复习计划列表（含知识点与难度） |
+| `get_user_profile` | 无 | JSON | 用户画像：手动偏好（rhythm 作息 / no_brain_after 晚间脑力截止 / fixed_activities 固定安排）+ 自动学习特征（每条含 confidence 观察次数与 evidence 中文证据）+ 最近行为事件。回答「为什么这么排」 |
+| `update_user_profile` | `rhythm?`、`no_brain_after?`、`fixed_activities?` | JSON | 手动调整画像：传空字符串 `""` 清除该设置，不传不修改；`fixed_activities` 为 JSON 数组字符串（见下） |
 
 调用约定：
 - 工具出错返回 `{"error": "中文原因"}`；缺少必填参数由 MCP 协议层直接拒绝
@@ -131,6 +133,43 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 Notion 任务库写入为**尽力而为**：未配置任务库 / 写入失败不阻断添加，
 结果进 `notion_sync` 字段（WorkBuddy 可转述「任务库写入失败：原因」）。
 
+### 用户画像语义（Issue #63，get_user_profile / update_user_profile）
+
+画像 = 手动偏好 + 自动学习特征，两条线都存 `user_profile` 表：
+
+| 来源 | 内容 | 示例 |
+|------|------|------|
+| 手动（`update_user_profile`） | 作息 rhythm（早鸟/夜猫/普通）、晚间脑力截止 no_brain_after（HH:MM）、固定安排 fixed_activities | 「夜猫」「21:00」「每天 17:00-18:00 跑步」 |
+| 自动学习（从行为推断） | prefer_bucket 调整偏好 / fit_bucket 完成时段 / late_worker 夜猫线索 | 「prefer_bucket.高等数学 = evening」 |
+
+**自动学习规则**（阈值与观察窗口为常量，可调）：
+
+| 规则 | 触发行为 | 学习条件 | 画像结果 |
+|------|----------|----------|----------|
+| R1 调整偏好 | `adjust_plan_item` 把 task/review/misc **跨时段**挪动 | 最近 14 天内同一对象 ≥3 次挪到同一时段（上午/下午/晚上） | `prefer_bucket.<课程>` |
+| R2 完成时段 | `mark_done` | 最近 14 天内同一对象 ≥3 次在同一时段完成 | `fit_bucket.<课程>` |
+| R3 夜猫线索 | 调整 / 完成发生在 21:00 后 | 最近 14 天内 ≥3 次 | `late_worker` |
+
+每条学习特征都带 `confidence`（观察次数）与 `evidence`（中文证据，
+如「观察到 2026-08-20 至 2026-08-24 共 3 次把「高数作业」调整到晚上」），
+WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为明细、
+不触发学习（插入时段是算法选的，不是用户偏好）。
+
+**规划器消费**（画像为空时行为与旧版完全一致）：
+- 有 `prefer_bucket.<课程>` / `fit_bucket.<课程>` 时，该课程的作业/复习
+  优先排进对应时段
+- `no_brain_after` 之后不再排 task/review（杂项如跑步不受限）
+- `fixed_activities` 当天的时间块从空闲时段扣除（与课程重叠自动裁剪）
+- `misc_items.preferred_time` 也换算为偏好时段生效
+
+`fixed_activities` 参数格式（JSON 数组字符串，`days` 可写「每天」或
+「一二三四五六日」的子集，如「一三五」）：
+
+```json
+[{"title":"跑步","days":"一三五","start":"17:00","end":"18:00"},
+ {"title":"午休","days":"每天","start":"12:30","end":"13:30"}]
+```
+
 ## 4. WorkBuddy 连接步骤
 
 > 方案 A 部署：WorkBuddy 与后端**装在同一台 Windows 电脑**，直接连本机地址，无需查局域网 IP。
@@ -153,7 +192,7 @@ Notion 任务库写入为**尽力而为**：未配置任务库 / 写入失败不
    }
    ```
 
-4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 9 个工具；
+4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 11 个工具；
    试着问「查询课程列表」或「今天的计划是什么」
 
 > 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址
