@@ -37,9 +37,11 @@ from backend.models import (
     Setting,
     Task,
 )
+from backend.mcp_server import profile_store
 from backend.scheduler.calibration import TIME_BUCKETS
 from backend.scheduler.interfaces import PlanItemDraft
 from backend.scheduler.planner import build_plan_full
+from backend.scheduler.profile import bucket_of_time, subject_for
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -176,6 +178,10 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         for s in sessions
     ]
 
+    # 1.5 用户画像偏好（Issue #63）：偏好时段 / 晚间脑力截止 / 固定安排屏障。
+    #     画像为空时全部为空 → 规划行为与旧版完全一致
+    prefs = profile_store.load_planner_prefs(db, plan_date)
+
     # 2. 作业任务（未完成且 deadline 未早于当日；无预估时长用默认值）
     iso = plan_date.isoformat()
     pending_tasks = (
@@ -186,6 +192,7 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         if t.deadline and (t.deadline[:10] < iso):
             continue  # 已过期的任务不自动排（用户另行处理）
         minutes = _clamp_duration(t.estimated_minutes, task_minutes)
+        subject = subject_for(t.course.name if t.course else None, t.title)
         task_drafts.append(
             PlanItemDraft(
                 date=plan_date,
@@ -194,6 +201,7 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
                 item_type="task",
                 ref_id=t.id,
                 title=t.title,
+                preferred_bucket=prefs.preferred_buckets.get(subject),
             )
         )
 
@@ -210,6 +218,8 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
     review_drafts: list[PlanItemDraft] = []
     for rs in due_reviews:
         kp = db.get(KnowledgePoint, rs.knowledge_point_id)
+        title = f"复习 · {kp.title if kp else f'知识点#{rs.knowledge_point_id}'}"
+        subject = subject_for(kp.course.name if kp and kp.course else None, title)
         review_drafts.append(
             PlanItemDraft(
                 date=plan_date,
@@ -217,7 +227,8 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
                 end=_minutes_to_time(_clamp_duration(review_minutes, review_minutes)),
                 item_type="review",
                 ref_id=rs.id,
-                title=f"复习 · {kp.title if kp else f'知识点#{rs.knowledge_point_id}'}",
+                title=title,
+                preferred_bucket=prefs.preferred_buckets.get(subject),
             )
         )
 
@@ -231,6 +242,16 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         if minutes == 0:
             skipped.append(f"杂项「{m.title}」缺少有效时长（duration_minutes），跳过")
             continue
+        # 杂项偏好：显式 preferred_time > 画像学习（prefer/fit）> 无偏好
+        declared_bucket: str | None = None
+        if m.preferred_time:
+            try:
+                declared_bucket = bucket_of_time(parse_hhmm(m.preferred_time))
+            except ValueError:
+                declared_bucket = None  # 非法偏好时间忽略
+        preferred_bucket = declared_bucket or prefs.preferred_buckets.get(
+            subject_for(None, m.title)
+        )
         misc_drafts.append(
             PlanItemDraft(
                 date=plan_date,
@@ -239,15 +260,24 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
                 item_type="misc",
                 ref_id=m.id,
                 title=m.title,
+                preferred_bucket=preferred_bucket,
             )
         )
 
     # 5. 学习时段偏好（settings.study_hours，格式 'HH:MM-HH:MM'，非法则忽略）
     study_hours = _parse_study_hours(_get_setting(db, "study_hours", ""))
 
-    # 6. 规划器求解（确定性贪心，保证不冲突 + UNIQUE(start)）
+    # 6. 规划器求解（确定性贪心，保证不冲突 + UNIQUE(start)）；
+    #    画像约束：偏好时段 / 晚间脑力截止 / 固定安排屏障（空画像不生效）
     result = build_plan_full(
-        plan_date, course_drafts, task_drafts, review_drafts, misc_drafts, study_hours
+        plan_date,
+        course_drafts,
+        task_drafts,
+        review_drafts,
+        misc_drafts,
+        study_hours,
+        brain_curfew=prefs.no_brain_after,
+        extra_barriers=prefs.barriers or None,
     )
     dropped = [f"{ITEM_TYPE_LABELS[d.item_type][1]}「{d.title}」" for d in result.dropped]
 
@@ -512,6 +542,7 @@ def adjust_plan_item(
     if item is None:
         raise ValueError(f"计划项不存在（id={item_id}）")
 
+    old_start = item.start_time  # 画像学习：记录调整前时段
     new_start = parse_hhmm(start_time)
     new_end = parse_hhmm(end_time)
     if new_end <= new_start:
@@ -540,6 +571,10 @@ def adjust_plan_item(
     db.commit()
     db.refresh(item)
     result = _item_to_dict(item)
+
+    # 用户画像学习（Issue #63）：记录「挪时段」行为并刷新学习特征，
+    # 尽力而为——学习失败不影响调整本身
+    _learn_from_adjustment(db, item, old_start)
 
     # 日历同步：仅当该日已有 confirmed 项（确认过并写入过日历）才增量同步
     has_confirmed = (
@@ -604,7 +639,56 @@ def mark_done(db: Session, item_id: int, actual_minutes: int | None = None) -> d
     result["calibration_recorded"] = calibration_recorded
     if linked_review is not None:
         result["linked_review_status"] = linked_review.status
+
+    # 用户画像学习（Issue #63）：记录「完成时段」行为并刷新学习特征，
+    # 尽力而为——学习失败不影响完成本身
+    _learn_from_completion(db, item)
     return result
+
+
+def _learn_from_adjustment(db: Session, item: PlanItem, old_start: str) -> None:
+    """画像学习：调整行为 → 记录事件 + 刷新学习特征（尽力而为，不抛错）。"""
+    try:
+        if item.item_type not in ("task", "review", "misc"):
+            return  # 课程块是固定安排，不构成偏好信号
+        subject, title = profile_store.subject_and_title_for(db, item)
+        profile_store.record_event(
+            db,
+            event_type="adjust",
+            plan_date=item.date,
+            subject=subject,
+            item_type=item.item_type,
+            from_bucket=time_bucket_for(old_start),
+            to_bucket=time_bucket_for(item.start_time),
+            start_time=item.start_time,
+            title=title,
+        )
+        profile_store.refresh_learned_features(db)
+        db.commit()
+    except Exception:  # noqa: BLE001 —— 画像学习尽力而为
+        db.rollback()
+
+
+def _learn_from_completion(db: Session, item: PlanItem) -> None:
+    """画像学习：完成行为 → 记录事件 + 刷新学习特征（尽力而为，不抛错）。"""
+    try:
+        if item.item_type not in ("task", "review", "misc"):
+            return
+        subject, title = profile_store.subject_and_title_for(db, item)
+        profile_store.record_event(
+            db,
+            event_type="done",
+            plan_date=item.date,
+            subject=subject,
+            item_type=item.item_type,
+            to_bucket=time_bucket_for(item.start_time),
+            start_time=item.start_time,
+            title=title,
+        )
+        profile_store.refresh_learned_features(db)
+        db.commit()
+    except Exception:  # noqa: BLE001 —— 画像学习尽力而为
+        db.rollback()
 
 
 def _duration_minutes(item: PlanItem) -> int:
@@ -788,6 +872,9 @@ def add_task(
             placed_dict = _item_to_dict(item)
             plan_action = "scheduled_today" if target == today else "scheduled_tomorrow"
             plan_message = f"已把「{task.title}」排进{when} {item.start_time}-{item.end_time}"
+            # 用户画像（Issue #63）：记录新增任务落位事件（只记明细，
+            # 不触发学习——插入时段是算法选的，不是用户偏好）
+            _record_add_task_event(db, item)
             for ev in evicted:
                 plan_message += (
                     f"；已把「{ev['title']}」顺延到{ev['to'][:10]} {ev['to'][11:]}（原本排在{ev['from']}）"
@@ -834,6 +921,25 @@ def _day_locked(db: Session, day: date) -> bool:
         .first()
         is not None
     )
+
+
+def _record_add_task_event(db: Session, item: PlanItem) -> None:
+    """用户画像：新增任务落位 → 记录行为事件（尽力而为，不抛错）。"""
+    try:
+        subject, _title = profile_store.subject_and_title_for(db, item)
+        profile_store.record_event(
+            db,
+            event_type="add_task",
+            plan_date=item.date,
+            subject=subject,
+            item_type=item.item_type,
+            to_bucket=time_bucket_for(item.start_time),
+            start_time=item.start_time,
+            title=item.title,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 —— 画像记录尽力而为
+        db.rollback()
 
 
 def _find_free_slot(

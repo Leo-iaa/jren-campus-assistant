@@ -1,8 +1,9 @@
 """数据模型注册入口。
 
-导入本包即把全部 11 张表注册到 ``Base.metadata``：
+导入本包即把全部 13 张表注册到 ``Base.metadata``：
 settings / courses / course_sessions / knowledge_points / review_schedules /
-tasks / plan_items / misc_items / data_sources / calibration_stats / plan_versions
+tasks / plan_items / misc_items / data_sources / calibration_stats /
+plan_versions / user_profile / profile_events
 """
 from backend.models.base import Base
 from backend.models.settings import Setting
@@ -12,6 +13,7 @@ from backend.models.task import Task, MiscItem
 from backend.models.plan import PlanItem, PlanVersion
 from backend.models.datasource import DataSource
 from backend.models.calibration import CalibrationStat
+from backend.models.profile import ProfileEvent, UserProfile
 
 __all__ = [
     "Base",
@@ -26,4 +28,6 @@ __all__ = [
     "PlanVersion",
     "DataSource",
     "CalibrationStat",
+    "UserProfile",
+    "ProfileEvent",
 ]
