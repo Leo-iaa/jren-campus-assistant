@@ -150,26 +150,26 @@ python -m backend.scripts.init_db
 
 # 3. 启动后端服务
 uvicorn backend.main:app --reload
-# 打开 http://127.0.0.1:8001/docs 查看接口文档（Swagger UI）
+# 打开 http://127.0.0.1:28070/docs 查看接口文档（Swagger UI）
 
 # 4. 运行测试
 cd backend
 python -m pytest
 ```
 
-健康检查：`curl http://127.0.0.1:8001/health` → `{"status":"ok","database":"connected"}`
+健康检查：`curl http://127.0.0.1:28070/health` → `{"status":"ok","database":"connected"}`
 
 **Windows 开机自启**（可选）：复制 `backend/scripts/start_backend_hidden.vbs` 到系统启动文件夹
 （`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`），登录后服务自动后台启动；
-自查：浏览器开 `http://127.0.0.1:8001/health`。详见 [docs/mcp-server.md](docs/mcp-server.md) 2.1 节。
+自查：浏览器开 `http://127.0.0.1:28070/health`。详见 [docs/mcp-server.md](docs/mcp-server.md) 2.1 节。
 
 ### WorkBuddy 集成
 
 > ✅ 后端 MCP Server 暴露层已实现（`backend/mcp_server/`，11 个工具，含 add_task / auto_confirm / get_user_profile），
 > 完整配置见 [docs/mcp-server.md](docs/mcp-server.md)。
 
-1. 启动后端：`uvicorn backend.main:app --host 0.0.0.0 --port 8001`
-2. WorkBuddy（设置 → MCP 服务）添加 MCP Server：类型 **http**，地址 `http://127.0.0.1:8001/mcp`（同机部署）
+1. 启动后端：`uvicorn backend.main:app --host 0.0.0.0 --port 28070`
+2. WorkBuddy（设置 → MCP 服务）添加 MCP Server：类型 **http**，地址 `http://127.0.0.1:28070/mcp`（同机部署）
 3. **微信推送（实测方案）**：安装 `wechat-clawbot-push` 桥（PyPI，stdio MCP，暴露 `push_wechat_message`），
    授权 token 后即可把自动化任务结果直推微信 ClawBot 聊天框（详见 [docs/mcp-server.md](docs/mcp-server.md) 5.1 节）
 4. WorkBuddy 配置两个「自动化」定时任务（均已实测跑通）：
