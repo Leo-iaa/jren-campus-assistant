@@ -68,7 +68,7 @@ def _rebuild_data_sources_check() -> None:
         conn.execute(text(
             "CREATE TABLE data_sources ("
             "id INTEGER PRIMARY KEY, "
-            f"source_type VARCHAR NOT NULL CHECK (source_type IN ({','.join(repr(t) for t in types)})), "
+            f"source_type VARCHAR NOT NULL CHECK (source_type IN ({','.join(repr(t) for t in SOURCE_TYPES)})), "
             "name VARCHAR, config VARCHAR, "
             "enabled INTEGER NOT NULL DEFAULT 1, "
             "last_sync_at VARCHAR, created_at VARCHAR NOT NULL)"
