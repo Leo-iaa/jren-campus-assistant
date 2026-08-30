@@ -1,15 +1,17 @@
 """MCP Server 暴露层：把后端能力包装为 MCP 工具（WorkBuddy 等客户端可调用）。
 
 - 传输：Streamable HTTP，挂载 ``/mcp`` 路径（接线见 ``backend/main.py``）
-- 工具（9 个，对齐 docs/mcp-server.md）：
+- 工具（11 个，对齐 docs/mcp-server.md）：
   generate_tomorrow_plan / get_today_plan_preview / confirm_plan /
-  adjust_plan_item / add_task / get_courses / get_tasks / get_reviews / mark_done
+  adjust_plan_item / add_task / get_courses / get_tasks / get_reviews / mark_done /
+  get_user_profile / update_user_profile
 - 每个工具调用使用独立数据库会话（``SessionLocal``），互不干扰；
   ``db_factory`` 可注入（测试指向临时数据库）
 - 工具返回 JSON 文本（ensure_ascii=False），便于 LLM 客户端直接阅读；
   出错返回 ``{"error": "..."}``，不让异常透出到协议层
 
-实现约定：业务逻辑全部在 ``backend/mcp_server/service.py``，
+实现约定：业务逻辑全部在 ``backend/mcp_server/service.py``（编排）与
+``backend/mcp_server/profile_store.py``（用户画像），
 本模块只做「参数 → 会话 → 调用 → 序列化」的薄封装。
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ from backend.config import settings
 from backend.database import SessionLocal
 from backend.mcp_server.notion_calendar import NotionCalendarError, build_writer
 from backend.mcp_server.notion_task import NotionTaskError, build_task_writer
+from backend.mcp_server.profile_store import get_profile, save_manual_prefs
 from backend.mcp_server.service import (
     add_task,
     adjust_plan_item,
@@ -79,6 +82,20 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
         "标记计划项完成：item_id 必填，actual_minutes 为实际耗时（分钟，可选）。"
         "task/review 项记录「预估 vs 实际」校准；review 项联动复习计划置 done。"
     ),
+    "get_user_profile": (
+        "查询用户画像：手动偏好（rhythm 作息：早鸟/夜猫/普通；no_brain_after："
+        "晚间脑力截止 HH:MM；fixed_activities：固定生活安排列表）+ 自动学习到的特征"
+        "（prefer_bucket 调整偏好 / fit_bucket 完成时段 / late_worker 夜猫线索，"
+        "每条含 confidence 观察次数与 evidence 中文证据，可回答「为什么这么排」）"
+        "+ 最近行为事件。"
+    ),
+    "update_user_profile": (
+        "手动调整用户画像：rhythm（早鸟/夜猫/普通）、no_brain_after（HH:MM，"
+        "晚上几点后不排脑力任务）、fixed_activities（JSON 数组字符串，如 "
+        '[{"title":"跑步","days":"一三五","start":"17:00","end":"18:00"}]，'
+        "days 可为「每天」或「一二三四五六日」子集）。"
+        "传空字符串 \"\" 表示清除该设置；不传表示不修改。返回更新后的完整画像。"
+    ),
 }
 
 
@@ -118,7 +135,8 @@ def build_mcp_server(
         title="J人校园助手",
         description=(
             "校园日程与复习助手：生成 / 预览 / 确认 / 调整每日计划，"
-            "查询课程、作业任务与复习计划，标记完成并校准耗时预估。"
+            "查询课程、作业任务与复习计划，标记完成并校准耗时预估，"
+            "维护用户画像（手动偏好 + 从行为自动学习）。"
         ),
         version=settings.app_version,
         log_level="WARNING",
@@ -328,5 +346,33 @@ def build_mcp_server(
     def get_reviews_tool(due_date: str | None = None) -> str:
         with session_scope() as db:
             return json.dumps(list_reviews(db, due_date=due_date), ensure_ascii=False)
+
+    # ---------- 用户画像 ----------
+
+    @server.tool(name="get_user_profile", description=_TOOL_DESCRIPTIONS["get_user_profile"])
+    @safe
+    def get_user_profile_tool() -> str:
+        with session_scope() as db:
+            return json.dumps(get_profile(db), ensure_ascii=False)
+
+    @server.tool(
+        name="update_user_profile", description=_TOOL_DESCRIPTIONS["update_user_profile"]
+    )
+    @safe
+    def update_user_profile_tool(
+        rhythm: str | None = None,
+        no_brain_after: str | None = None,
+        fixed_activities: str | None = None,
+    ) -> str:
+        with session_scope() as db:
+            return json.dumps(
+                save_manual_prefs(
+                    db,
+                    rhythm=rhythm,
+                    no_brain_after=no_brain_after,
+                    fixed_activities=fixed_activities,
+                ),
+                ensure_ascii=False,
+            )
 
     return server

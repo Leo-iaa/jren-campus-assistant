@@ -37,6 +37,7 @@ class PlanItemDraft:
     ref_id: int | None
     title: str
     release_slot: bool = False  # 课程块是否释放（B/C 档：该时段可安排其他任务）
+    preferred_bucket: str | None = None  # 画像偏好时段（morning/afternoon/evening，可选）
 
 
 # ---------- 接口签名（占位） ----------
@@ -75,8 +76,16 @@ class PlanBuilder(Protocol):
         reviews: list[PlanItemDraft],
         misc_items: list[PlanItemDraft],
         study_hours: tuple[time, time] | None = None,
+        brain_curfew: time | None = None,
+        extra_barriers: list[tuple[time, time]] | None = None,
     ) -> list[PlanItemDraft]:
-        """生成当日建议时间表（约束求解，保证不冲突）。"""
+        """生成当日建议时间表（约束求解，保证不冲突）。
+
+        可选扩展（向后兼容）：
+        - ``brain_curfew``：晚间脑力截止——task/review 不排在该时间之后（misc 不受限）
+        - ``extra_barriers``：额外固定时间块（如用户画像里的固定生活安排），
+          从空闲时段中扣除（与课程重叠部分自动裁剪）
+        """
         ...
 
 

@@ -50,7 +50,7 @@ def main() -> None:
     print(f"📁 数据目录：{data_dir}")
 
     create_tables()
-    print("✅ 数据表创建完成（11 张表）")
+    print(f"✅ 数据表创建完成（{len(models.Base.metadata.tables)} 张表）")
 
     seed_default_settings()
 
