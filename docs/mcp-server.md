@@ -67,7 +67,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 > 注意：vbs 引用的是仓库的**绝对路径**；若仓库被移动，需同步更新 vbs 中的路径。
 
-## 3. 工具清单（11 个）
+## 3. 工具清单（13 个）
 
 | 工具 | 参数 | 返回 | 说明 |
 |------|------|------|------|
@@ -82,6 +82,8 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 | `get_reviews` | `due_date?`（YYYY-MM-DD） | JSON 数组 | 复习计划列表（含知识点与难度） |
 | `get_user_profile` | 无 | JSON | 用户画像：手动偏好（rhythm 作息 / no_brain_after 晚间脑力截止 / fixed_activities 固定安排）+ 自动学习特征（每条含 confidence 观察次数与 evidence 中文证据）+ 最近行为事件。回答「为什么这么排」 |
 | `update_user_profile` | `rhythm?`、`no_brain_after?`、`fixed_activities?` | JSON | 手动调整画像：传空字符串 `""` 清除该设置，不传不修改；`fixed_activities` 为 JSON 数组字符串（见下） |
+| `get_running_data` | `days?`（默认 7，最大 90）、`source_id?` | JSON：activities / recovery / fitness / load / warnings | 高驰 COROS 跑步数据快照（近 N 天跑步记录 + 恢复状态 + 体能评估 + 训练负荷）；需先绑定 coros 数据源并完成授权（见 docs/mcp-client.md 第 5 节）。回答「我最近跑得怎么样」引用真实数据（Issue #65） |
+| `generate_running_plan` | `schedule?`（默认 false）、`start_date?`、`source_id?` | JSON：weekly_distance_km / sessions / rationale / scheduled / failed | 根据 COROS 真实数据生成周训练计划（轻松跑/间歇/长距离，尊重恢复信号、跑量增幅 ≤10%，学生业余强度）；`schedule=true` 时训练块以杂项身份排进日程（从下一个周一起，增量插入不动已有安排，放不下进 failed）。rationale 为中文理由，引用真实跑量/配速 |
 
 调用约定：
 - 工具出错返回 `{"error": "中文原因"}`；缺少必填参数由 MCP 协议层直接拒绝
@@ -192,7 +194,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
    }
    ```
 
-4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 11 个工具；
+4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 13 个工具；
    试着问「查询课程列表」或「今天的计划是什么」
 
 > 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址

@@ -6,6 +6,13 @@
 
 ### Added
 
+- 高驰 COROS MCP 接入 + 跑步训练计划（#65）：
+  - 接入官方远程 MCP（`mcp.coros.com/mcp`，streamable HTTP 无状态调用）+ OAuth CLI 登录会话流（动态注册 client → 浏览器打开 loginUrl 登录 → 轮询兑换 PKCE token，无需公网回调）；社区非官方 API 方案评估后放弃（Training Hub 网页接口有账号风控风险）
+  - 新增 `backend/mcp_client/coros.py`：CorosAdapter（查询型数据源，数据不落库，同 Obsidian 模式）+ OAuth device 流 + 官方工具结果容错解析（structuredContent / text JSON / 距离米千米、时长秒分归一化）
+  - 新增纯逻辑规则引擎 `backend/scheduler/running_plan.py`：周训练计划（轻松跑/间歇/长距离/休息）——跑量增幅 ≤10%、恢复差或负荷比 >1.3 减量 30%、恢复差不排强度课、强度课间隔 ≥2 天、配速按个人近期均值推算、无数据保守 15km 起步；输出含中文理由（引用真实跑量/配速/VO2max）
+  - 新增 MCP 工具 2 个（11 → 13）：`get_running_data`（近 N 天跑步快照：记录/恢复/体能/负荷）、`generate_running_plan`（生成周计划，`schedule=true` 时把训练块以杂项身份逐日排进日程——复用 `_find_free_slot` 增量插入不冲突，放不下进 failed，已确认日同步 Notion 日历）
+  - 数据源类型 +coros：OAuth 端点（`/api/data-sources/coros/oauth/start|finish|cancel`）；旧库 `data_sources` CHECK 约束自动重建（SQLite 不支持 ALTER CHECK，迁移须先停后端服务）；`oauth_session` 纳入响应打码清单
+  - pytest 新增 31 例（adapter 归一化 10 + 规则引擎 9 + 同步/OAuth/工具端点 12），全量 321 例通过
 - 用户画像（#63）：
   - 新增 2 张表：`user_profile`（画像特征：手动偏好 + 自动学习特征，含 confidence 观察次数与 evidence 中文证据）+ `profile_events`（行为痕迹明细：调整 / 完成 / 新增任务）；11 表 → 13 表，旧库 `init_db` 幂等补建
   - 新增纯逻辑学习模块 `backend/scheduler/profile.py` + 存储层 `backend/mcp_server/profile_store.py`，3 条可解释学习规则：R1 调整偏好（14 天内同一课程/类型 ≥3 次跨时段挪到同一时段 → `prefer_bucket.<课程>`）、R2 完成时段（≥3 次同一时段完成 → `fit_bucket.<课程>`）、R3 夜猫线索（≥3 次 21:00 后安排/完成任务 → `late_worker`）；证据如「观察到 2026-08-20 至 2026-08-24 共 3 次把「高数作业」调整到晚上」
