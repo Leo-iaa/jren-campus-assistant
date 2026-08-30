@@ -17,6 +17,8 @@ EXPECTED_TABLES = {
     "data_sources",
     "calibration_stats",
     "plan_versions",
+    "user_profile",
+    "profile_events",
 }
 
 

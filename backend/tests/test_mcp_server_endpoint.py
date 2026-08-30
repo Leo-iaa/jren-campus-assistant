@@ -22,6 +22,8 @@ EXPECTED_TOOLS = [
     "add_task",
     "get_tasks",
     "get_reviews",
+    "get_user_profile",
+    "update_user_profile",
 ]
 
 HEADERS = {"Accept": "application/json, text/event-stream"}
@@ -249,3 +251,42 @@ def test_mcp_tool_missing_required_param_rejected_by_sdk(client):
     assert data["result"]["isError"] is True
     text = data["result"]["content"][0]["text"]
     assert "validation error" in text and "date" in text
+
+
+def test_mcp_get_user_profile_empty(client):
+    """空画像：get_user_profile 返回默认值（rhythm unknown / 无学习特征）。"""
+    session_id = handshake(client)
+    profile = call_tool(client, session_id, "get_user_profile", mid=40)
+    assert profile["rhythm"] == "unknown"
+    assert profile["no_brain_after"] is None
+    assert profile["fixed_activities"] == []
+    assert profile["learned"] == []
+    assert profile["recent_events"] == []
+
+
+def test_mcp_update_user_profile_roundtrip(client):
+    """update_user_profile 写入手动偏好 → get_user_profile 可读回。"""
+    session_id = handshake(client)
+    updated = call_tool(
+        client,
+        session_id,
+        "update_user_profile",
+        {"rhythm": "夜猫", "no_brain_after": "21:00"},
+        mid=41,
+    )
+    assert updated["rhythm"] == "夜猫"
+    assert updated["no_brain_after"] == "21:00"
+
+    profile = call_tool(client, session_id, "get_user_profile", mid=42)
+    assert profile["rhythm"] == "夜猫"
+    assert profile["no_brain_after"] == "21:00"
+
+
+def test_mcp_update_user_profile_invalid_value(client):
+    """非法手动偏好值 → 返回 {\"error\": ...}，不落库。"""
+    session_id = handshake(client)
+    result = call_tool(
+        client, session_id, "update_user_profile", {"rhythm": "修仙党"}, mid=43
+    )
+    assert "error" in result
+    assert "作息类型" in result["error"]
