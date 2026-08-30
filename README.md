@@ -27,7 +27,7 @@
 
 | 功能 | 说明 |
 |------|------|
-| 📥 多源数据自动采集 | 通过 MCP 统一读取课表（iCal）、Notion（作业/任务）、Obsidian（课堂笔记） |
+| 📥 多源数据自动采集 | 通过 MCP 统一读取课表（iCal）、Notion（作业/任务）、Obsidian（课堂笔记）、COROS（跑步数据） |
 | 💬 微信一句话加任务 | 对 WorkBuddy 说「有新任务：XXX，ddl 是 YYY，类型是 ZZZ」→ 自动写本地 + Notion 任务库并排进日程（`add_task` 工具，Issue #55） |
 | 🧠 知识点智能提取 | LLM 自动把当天笔记切分为「知识点记忆单元」并评估难度 |
 | 📈 遗忘曲线复习调度 | 按课程档位（S/A/B/C，用户自设）与知识点难度自动安排复习，结合作业 deadline 反推优先级 |
@@ -35,6 +35,7 @@
 | ✅ 计划自动确认 | 21:00 自动生成次日计划并确认写入 Notion Calendar（`auto_confirm`，Issue #58）；也可改回手动确认模式 |
 | 🔄 习惯自适应 | 持续记录「预估 vs 实际」耗时，按课程 × 时段 × 难度自动校准后续规划 |
 | 🧑 用户画像 | 记录作息 / 效率偏好 / 生活规律；从调整、完成、新增任务的行为中自动学习（如「连续 3 次把高数挪到晚上 → 高数优先排晚上」），规划时按画像智能安排，可对话查看/修改（Issue #63） |
+| 🏃 跑步训练计划 | 接入高驰 COROS 官方 MCP，读真实跑步数据（跑量 / 配速 / 恢复 / 负荷），按周生成可执行的训练计划（轻松跑 / 间歇 / 长距离），尊重恢复信号、跑量增幅 ≤10%，训练块自动排进日程不与课程冲突（Issue #65） |
 | 💡 主动建议 | 遗忘窗口提醒、任务过载建议拆分/延后、每日计划晨推 |
 
 ## 🧱 技术架构
@@ -46,8 +47,8 @@
 │  └─ AI 交互：WorkBuddy + 微信（对话确认/调整/查询）    │
 ├─────────────────────────────────────────────────┤
 │  后端：Python FastAPI                            │
-│  ├─ MCP Server 暴露层（对接 WorkBuddy，11 个工具）     │
-│  ├─ MCP 客户端层（Notion/Obsidian/iCal）         │
+│  ├─ MCP Server 暴露层（对接 WorkBuddy，13 个工具）     │
+│  ├─ MCP 客户端层（Notion/Obsidian/iCal/COROS）         │
 │  ├─ 知识提取层（LLM 抽取知识点与难度）            │
 │  ├─ 遗忘曲线调度器（复习间隔算法）                │
 │  ├─ 时间表规划器（约束求解 + LLM 编排）           │
@@ -110,10 +111,10 @@ jren-campus-assistant/
 │   ├── models/        # SQLAlchemy 数据模型（13 张表）
 │   ├── schemas/       # Pydantic 请求/响应模型（校验与枚举）
 │   ├── scheduler/     # 遗忘曲线 + 时间表规划 + 习惯校准 + 用户画像学习（已实现）
-│   ├── mcp_client/    # MCP 数据接入层（Notion / Obsidian / iCal adapter）
-│   ├── mcp_server/    # MCP Server 暴露层（WorkBuddy 接入：11 工具 + 定时任务 + Notion 日历/任务库写入 + 用户画像）
+│   ├── mcp_client/    # MCP 数据接入层（Notion / Obsidian / iCal / COROS adapter）
+│   ├── mcp_server/    # MCP Server 暴露层（WorkBuddy 接入：13 工具 + 定时任务 + Notion 日历/任务库写入 + 用户画像）
 │   ├── scripts/       # 工具脚本（init_db.py 数据库初始化）
-│   ├── tests/         # pytest 测试（290 例）
+│   ├── tests/         # pytest 测试（321 例）
 │   └── data/          # SQLite 数据库文件（运行时生成，不入库）
 ├── docs/              # 设计文档
 └── README.md

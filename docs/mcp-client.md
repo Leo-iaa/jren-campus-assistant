@@ -14,6 +14,7 @@ backend/mcp_client/
 ├── ical.py        # iCal adapter：教务 .ics 课表 → 课程时间块
 ├── notion.py      # Notion adapter：官方远程 MCP（mcp.notion.com/mcp）→ 作业任务
 ├── obsidian.py    # Obsidian adapter：obsidian-mcp-server / vault 直读 → 笔记查询
+├── coros.py       # COROS adapter：官方远程 MCP（mcp.coros.com/mcp）→ 跑步数据
 └── service.py     # 同步服务：adapter 结果落库 + last_sync_at 管理
 ```
 
@@ -111,7 +112,43 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
   -H 'Content-Type: application/json' -d '{"query": "极限"}'
 ```
 
-## 5. 数据源管理 API 速查
+## 5. 高驰 COROS（跑步数据，查询型不落库，Issue #65）
+
+> 接入**官方远程 MCP** `https://mcp.coros.com/mcp`（streamable HTTP）。
+> 社区版 `cygnusb/coros-mcp` 走非官方 Training Hub 网页接口，有账号风控风险，不采用。
+
+### 5.1 授权（CLI 登录会话流，无需公网回调）
+
+```bash
+# 1. 发起授权 → 返回 login_url
+curl -X POST http://127.0.0.1:8000/api/data-sources/coros/oauth/start -H 'Content-Type: application/json' -d '{}'
+# → {"source_id": 3, "login_url": "https://..."}（自动新建 coros 数据源）
+
+# 2. 在浏览器（手机/电脑均可）打开 login_url，登录高驰账号并授权
+
+# 3. 完成登录后兑换 token（后端轮询会话状态，timeout 秒内有效）
+curl -X POST http://127.0.0.1:8000/api/data-sources/coros/oauth/finish \
+  -H 'Content-Type: application/json' -d '{"source_id": 3, "timeout": 60}'
+```
+
+授权细节：后端经 COROS 网关动态注册 OAuth client（RFC 7591）→ 创建 CLI 登录会话
+→ 用户浏览器登录 → 轮询 claim 拿 login_ticket → 带 ticket 走 authorize（PKCE S256）
+→ 302 回调里提取 code 兑换 token。token（access/refresh/expires_at/client_id）
+存数据源 `config.tokens`，过期前 60s 自动 refresh 并写回；`oauth_session` 与
+`tokens` 在 API 响应中打码。
+
+### 5.2 数据语义
+
+- **查询型数据源**：COROS 服务器保存完整训练历史，本层不落库（同 Obsidian 模式）；
+  `POST /{id}/sync` 只校验链路连通（token 可用 + 拉一次近 7 天快照）并更新 last_sync_at
+- 官方工具（只读）：`querySportRecords`（活动记录）、`queryRecoveryStatus`（恢复状态）、
+  `queryFitnessAssessmentOverview`（VO2max/阈值配速/比赛预测）、`queryTrainingLoadAssessment`（负荷比）
+- MCP 调用为**无状态**：每次查询独立 initialize + tools/call（对齐官方 skill 语义），
+  工具结果兼容 structuredContent / content JSON 文本 / 裸文本三种形态
+- 官方工具字段名未完整公开文档化：adapter 对距离（米/千米）、时长（秒/分）、
+  配速（多候选键）做归一化；真实接入后如发现字段偏差，只需调整 `_normalize_activity`
+
+## 6. 数据源管理 API 速查
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -120,20 +157,26 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
 | PATCH | `/api/data-sources/{id}` | 更新（含 enabled / config / last_sync_at） |
 | POST | `/api/data-sources/{id}/enable` / `disable` | 启用 / 禁用（禁用后同步返回 409） |
 | POST | `/api/data-sources/{id}/sync` | 触发同步（iCal 支持 `ics_content` / `mode`） |
+| POST | `/api/data-sources/coros/oauth/start` | COROS 授权起点（返回浏览器登录链接） |
+| POST | `/api/data-sources/coros/oauth/finish` | COROS 授权完成（兑换并保存 token） |
+| POST | `/api/data-sources/coros/oauth/cancel` | 取消进行中的 COROS 授权 |
 | POST | `/api/data-sources/notion/oauth/start` | Notion OAuth 起点（⚠️ 保留但已非主路径，见第 3 节） |
 | POST | `/api/data-sources/notion/oauth/callback` | Notion OAuth 回调（兑换 token） |
 | DELETE | `/api/data-sources/{id}` | 解绑 |
 
-## 6. 测试（全 mock，无需真实账号/密钥）
+## 7. 测试（全 mock，无需真实账号/密钥）
 
 - `test_mcp_transport.py`：stdio 假子进程 + streamable HTTP（httpx.MockTransport），覆盖握手 / 工具调用 / 错误 / SSE / session id
 - `test_mcp_oauth.py`：PKCE 参数、授权码兑换、refresh、过期判断（MockTransport）
 - `test_mcp_ical.py`：教务导出格式合成样例（多 VEVENT 合并 / TZID / DESCRIPTION 兜底 / 跳过规则）
 - `test_mcp_notion.py`：Notion 属性映射 / 状态归一化 / 文本 JSON 兜底（fake transport）
 - `test_mcp_obsidian.py`：MCP 查询 + vault 直读兜底 + 目录穿越防护
+- `test_mcp_coros.py`：COROS 工具结果三形态解析 / 字段归一化 / OAuth CLI 登录会话流（MockTransport）
+- `test_running_plan.py`：训练计划规则引擎（跑量增幅 / 恢复减量 / 强度间隔 / 确定性）
+- `test_mcp_server_running.py`：COROS 同步 API / OAuth 端点 / 跑步工具端点 / 训练块排日程（adapter mock，落库真实）
 - `test_mcp_sync_api.py`：同步 / 启停 / OAuth 端点（adapter mock，落库真实）
 
 ```bash
 cd backend
-.venv/Scripts/python.exe -m pytest   # 全量 173 例（原 123 + MCP 50）
+py -3 -m pytest   # 全量 321 例
 ```
