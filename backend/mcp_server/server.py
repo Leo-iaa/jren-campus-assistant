@@ -30,6 +30,7 @@ from backend.database import SessionLocal
 from backend.mcp_server.notion_calendar import NotionCalendarError, build_writer
 from backend.mcp_server.notion_task import NotionTaskError, build_task_writer
 from backend.mcp_server.profile_store import get_profile, save_manual_prefs
+from backend.mcp_server.running_service import generate_running_plan, get_running_data
 from backend.mcp_server.service import (
     add_task,
     adjust_plan_item,
@@ -95,6 +96,20 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
         '[{"title":"跑步","days":"一三五","start":"17:00","end":"18:00"}]，'
         "days 可为「每天」或「一二三四五六日」子集）。"
         "传空字符串 \"\" 表示清除该设置；不传表示不修改。返回更新后的完整画像。"
+    ),
+    "get_running_data": (
+        "查询高驰 COROS 跑步数据（近 N 天，默认 7，最大 90）：跑步记录"
+        "（日期/距离/时长/配速/心率/训练类型）+ 恢复状态 + 体能评估"
+        "（VO2max/阈值配速/比赛预测）+ 训练负荷。需先绑定 coros 数据源并"
+        "完成授权。回答「我最近跑得怎么样」等训练问题时调用本工具引用真实数据。"
+    ),
+    "generate_running_plan": (
+        "根据 COROS 跑步数据生成未来一周训练计划（轻松跑/间歇/长距离/休息，"
+        "尊重恢复信号与 ≤10% 跑量增幅，学生业余强度）。schedule=false 只出建议；"
+        "schedule=true 同时把训练块以杂项身份排进日程（从下一个周一起，"
+        "增量插入不动已有安排，放不下的进 failed）。start_date 可指定周起始"
+        "（YYYY-MM-DD）。返回含 sessions（每课类型/时长/配速细节）与 rationale"
+        "（中文理由，引用真实数据）。"
     ),
 }
 
@@ -374,5 +389,42 @@ def build_mcp_server(
                 ),
                 ensure_ascii=False,
             )
+
+    # ---------- 跑步训练计划（COROS MCP 接入，Issue #65） ----------
+
+    @server.tool(name="get_running_data", description=_TOOL_DESCRIPTIONS["get_running_data"])
+    @safe
+    def get_running_data_tool(days: int = 7, source_id: int | None = None) -> str:
+        with session_scope() as db:
+            result = get_running_data(db, days=days, source_id=source_id)
+        return json.dumps(result, ensure_ascii=False)
+
+    @server.tool(
+        name="generate_running_plan", description=_TOOL_DESCRIPTIONS["generate_running_plan"]
+    )
+    @safe
+    def generate_running_plan_tool(
+        schedule: bool = False,
+        start_date: str | None = None,
+        source_id: int | None = None,
+    ) -> str:
+        notion_error: str | None = None
+        calendar_writer = None
+        with session_scope() as db:
+            if schedule:
+                try:
+                    calendar_writer = build_writer(db)
+                except NotionCalendarError as exc:
+                    notion_error = str(exc)
+            result = generate_running_plan(
+                db,
+                source_id=source_id,
+                schedule=schedule,
+                start_date=start_date,
+                calendar_writer=calendar_writer,
+            )
+        if notion_error and not result.get("notion_sync"):
+            result["notion_sync"] = [{"error": notion_error}]
+        return json.dumps(result, ensure_ascii=False)
 
     return server

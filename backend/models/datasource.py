@@ -8,16 +8,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 from backend.models.base import Base, shanghai_now
 
 # 支持的数据源类型（新数据源 = 新增 MCP adapter）
-SOURCE_TYPES = ("notion", "obsidian", "ical", "caldav")
+SOURCE_TYPES = ("notion", "obsidian", "ical", "caldav", "coros")
 
 
 class DataSource(Base):
-    """数据源绑定：Notion OAuth / Obsidian vault / iCal / CalDAV。"""
+    """数据源绑定：Notion OAuth / Obsidian vault / iCal / CalDAV / COROS。"""
 
     __tablename__ = "data_sources"
     __table_args__ = (
         CheckConstraint(
-            "source_type IN ('notion','obsidian','ical','caldav')", name="ck_ds_source_type"
+            f"source_type IN ({','.join(repr(t) for t in SOURCE_TYPES)})",
+            name="ck_ds_source_type",
         ),
     )
 
