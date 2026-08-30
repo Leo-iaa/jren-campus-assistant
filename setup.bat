@@ -78,7 +78,7 @@ echo   Setup complete!
 echo.
 echo   Next steps:
 echo     1. Double-click  backend\scripts\start_backend.bat
-echo     2. Health check:  http://127.0.0.1:8000/health
+echo     2. Health check:  http://127.0.0.1:8001/health
 echo     3. Follow the user manual: docs/USER_GUIDE.md
 echo ============================================
 echo.

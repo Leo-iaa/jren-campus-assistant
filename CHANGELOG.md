@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 后端端口 8000 → 8001：系统进程 mrender.exe（svchost 子进程）以 Bound 状态抢占 8000 致 uvicorn 无法绑定（winerror 10048）；同步更新启动脚本、配置脚本、文档（#68）
+
 ### Added
 
 - 高驰 COROS MCP 接入 + 跑步训练计划（#65）：

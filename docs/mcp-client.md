@@ -29,19 +29,19 @@ backend/mcp_client/
 
 ```bash
 # 1. 绑定数据源（config 里写 .ics 文件路径）
-curl -X POST http://127.0.0.1:8000/api/data-sources \
+curl -X POST http://127.0.0.1:8001/api/data-sources \
   -H 'Content-Type: application/json' \
   -d '{"source_type": "ical", "name": "2026春夏课表",
        "config": "{\"ics_path\": \"C:/Users/LEO/Downloads/2026春夏.ics\"}"}'
 
 # 2. 触发同步（创建/更新 courses + course_sessions，并记录 last_sync_at）
-curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync
+curl -X POST http://127.0.0.1:8001/api/data-sources/<id>/sync
 ```
 
 ### 2.2 方式二：请求体直接提交 .ics 文本
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
+curl -X POST http://127.0.0.1:8001/api/data-sources/<id>/sync \
   -H 'Content-Type: application/json' \
   -d '{"ics_content": "BEGIN:VCALENDAR\n..."}'
 ```
@@ -82,7 +82,7 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
 ```bash
 # 在 Notion 创建集成（https://www.notion.so/my-integrations → New integration），
 # 复制令牌（ntn_ 开头），并把集成「连接」到目标数据库（数据库页 ... → Connections）
-curl -X POST http://127.0.0.1:8000/api/data-sources \
+curl -X POST http://127.0.0.1:8001/api/data-sources \
   -H 'Content-Type: application/json' \
   -d '{"source_type": "notion", "name": "Notion",
        "config": "{\"tokens\": {\"access_token\": \"ntn_你的令牌\"}}"}'
@@ -92,7 +92,7 @@ curl -X POST http://127.0.0.1:8000/api/data-sources \
 
 ```bash
 # config 里需要 database_id（Notion 作业数据库 ID）；也可在同步请求体传 database_id
-curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync
+curl -X POST http://127.0.0.1:8001/api/data-sources/<id>/sync
 ```
 
 - 直接调 Notion REST `POST /v1/databases/{id}/query`。
@@ -108,7 +108,7 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync
 
 ```bash
 # 绑定后带关键词同步（只查询并记录同步时间，不产生业务数据）
-curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
+curl -X POST http://127.0.0.1:8001/api/data-sources/<id>/sync \
   -H 'Content-Type: application/json' -d '{"query": "极限"}'
 ```
 
@@ -121,13 +121,13 @@ curl -X POST http://127.0.0.1:8000/api/data-sources/<id>/sync \
 
 ```bash
 # 1. 发起授权 → 返回 login_url
-curl -X POST http://127.0.0.1:8000/api/data-sources/coros/oauth/start -H 'Content-Type: application/json' -d '{}'
+curl -X POST http://127.0.0.1:8001/api/data-sources/coros/oauth/start -H 'Content-Type: application/json' -d '{}'
 # → {"source_id": 3, "login_url": "https://..."}（自动新建 coros 数据源）
 
 # 2. 在浏览器（手机/电脑均可）打开 login_url，登录高驰账号并授权
 
 # 3. 完成登录后兑换 token（后端轮询会话状态，timeout 秒内有效）
-curl -X POST http://127.0.0.1:8000/api/data-sources/coros/oauth/finish \
+curl -X POST http://127.0.0.1:8001/api/data-sources/coros/oauth/finish \
   -H 'Content-Type: application/json' -d '{"source_id": 3, "timeout": 60}'
 ```
 

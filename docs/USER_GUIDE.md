@@ -64,10 +64,10 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 ### 4.3 启动服务
 
 1. **双击 `backend\scripts\start_backend.bat`**
-2. 验证是否成功：浏览器打开 `http://127.0.0.1:8000/health`
+2. 验证是否成功：浏览器打开 `http://127.0.0.1:8001/health`
 3. 看到 `{"status":"ok",...}` 就是成功了 ✅
 
-> 接口页面（可看可点）：浏览器打开 `http://127.0.0.1:8000/docs`
+> 接口页面（可看可点）：浏览器打开 `http://127.0.0.1:8001/docs`
 
 ### 4.4 开机自启（强烈推荐）
 
@@ -78,7 +78,7 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 2. 把仓库里的 `backend\scripts\start_backend_hidden.vbs` **复制**进去
 3. 以后每次开机登录，服务自动在后台启动，不用手动双击
 
-**服务在不在跑？** 浏览器打开 `http://127.0.0.1:8000/health`，能看到 ok 就是在跑。
+**服务在不在跑？** 浏览器打开 `http://127.0.0.1:8001/health`，能看到 ok 就是在跑。
 
 ### 4.5 导入课表（必须做）
 
@@ -120,7 +120,7 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 2. 填写：
    - 名称：随意（如 `jren-campus-assistant`）
    - 类型：**http**（Streamable HTTP）
-   - 地址：`http://127.0.0.1:8000/mcp`
+   - 地址：`http://127.0.0.1:8001/mcp`
 3. 连接成功后，问 WorkBuddy：**「查询课程列表」**——能返回结果就说明联调成功 ✅
 
 ### 4.8 WorkBuddy 定时任务（核心自动化）
@@ -226,11 +226,11 @@ WorkBuddy 回复：已生成周训练计划（目标 25km，3 次训练）：
 
 ## 6. 常见问题（FAQ）
 
-**Q：`http://127.0.0.1:8000/health` 打不开？**
+**Q：`http://127.0.0.1:8001/health` 打不开？**
 A：服务没在运行。双击 `backend\scripts\start_backend.bat` 手动启动；如果还不行，重启电脑让开机自启生效。
 
 **Q：WorkBuddy 提示连不上 MCP？**
-A：① 先确认 `http://127.0.0.1:8000/health` 能打开（服务在跑）；② 检查 MCP 地址是否 `http://127.0.0.1:8000/mcp`、类型是否 **http**；③ WorkBuddy 装在其他设备时改用 `http://<电脑IP>:8000/mcp` 并确认防火墙放行。
+A：① 先确认 `http://127.0.0.1:8001/health` 能打开（服务在跑）；② 检查 MCP 地址是否 `http://127.0.0.1:8001/mcp`、类型是否 **http**；③ WorkBuddy 装在其他设备时改用 `http://<电脑IP>:8001/mcp` 并确认防火墙放行。
 
 **Q：确认计划后 Notion 日历没写入？**
 A：看 `confirm_plan` 返回的 `notion_sync` 字段：`null` = 没绑定 Notion 数据源；报错 = 按提示排查（令牌无效 / 缺数据库 ID / 属性名不匹配）。
