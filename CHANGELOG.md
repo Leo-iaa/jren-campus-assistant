@@ -6,6 +6,14 @@
 
 ### Added
 
+- 用户画像（#63）：
+  - 新增 2 张表：`user_profile`（画像特征：手动偏好 + 自动学习特征，含 confidence 观察次数与 evidence 中文证据）+ `profile_events`（行为痕迹明细：调整 / 完成 / 新增任务）；11 表 → 13 表，旧库 `init_db` 幂等补建
+  - 新增纯逻辑学习模块 `backend/scheduler/profile.py` + 存储层 `backend/mcp_server/profile_store.py`，3 条可解释学习规则：R1 调整偏好（14 天内同一课程/类型 ≥3 次跨时段挪到同一时段 → `prefer_bucket.<课程>`）、R2 完成时段（≥3 次同一时段完成 → `fit_bucket.<课程>`）、R3 夜猫线索（≥3 次 21:00 后安排/完成任务 → `late_worker`）；证据如「观察到 2026-08-20 至 2026-08-24 共 3 次把「高数作业」调整到晚上」
+  - 埋点：`adjust_plan_item` / `mark_done` 触发学习；`add_task` 只记明细不学习（插入时段是算法选的，不是用户偏好）；学习尽力而为，失败不影响原操作
+  - 规划器消费（空画像行为与旧版完全一致）：`preferred_bucket` 优先排进偏好时段（窗口按 12:00/18:00 分桶边界切分，避免落在偏好时段边缘）；`no_brain_after` 之后不排 task/review（杂项不受限）；`fixed_activities` 固定安排作为空闲时段屏障（与课程重叠自动裁剪）；`misc_items.preferred_time` 首次接入规划器
+  - 新增 MCP 工具 2 个（9 → 11）：`get_user_profile`（查看画像 + 证据，回答「为什么这么排」）、`update_user_profile`（对话调整：rhythm 作息 / no_brain_after 晚间脑力截止 / fixed_activities 固定安排 JSON，空字符串清除）
+  - 文档同步：database.md（3.12/3.13 + ER + 设计决策）/ mcp-server.md（工具表 + 画像语义节）/ architecture.md（2.7 画像模块）/ README / USER_GUIDE
+  - pytest 新增 43 例（画像纯逻辑 24 + service/存储集成 16 + MCP 端点 3），全量 290 例通过
 - 项目初始化：README、架构设计文档（`docs/architecture.md`）、`.gitignore`（#1）
 - 产品愿景与需求文档 `docs/vision.md`
 - MIT 开源许可证

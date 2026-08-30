@@ -166,10 +166,10 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
           · 新任务：说「有新任务：XXX，ddl 是明天」→ 自动入库并排日程
 ☀️ 08:20  微信收到今日计划预览
 📱 白天   打开 Notion Calendar 看时间表；完成一项就跟 WorkBuddy 说「标记 XX 完成」
-🔄 长期   系统记录你的「预估 vs 实际」耗时，越用越准
+🔄 长期   系统记录你的「预估 vs 实际」耗时，越用越准；也会记住你的习惯（把高数挪到晚上 3 次 → 以后高数自动排晚上）
 ```
 
-**9 个 MCP 工具一览**（WorkBuddy 里可直接调用）：
+**11 个 MCP 工具一览**（WorkBuddy 里可直接调用）：
 
 | 工具 | 作用 |
 |------|------|
@@ -180,6 +180,8 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 | `add_task` | **一句话添加任务**（写本地 + Notion 任务库，自动排日程） |
 | `mark_done` | 标记完成（触发耗时校准） |
 | `get_courses` / `get_tasks` / `get_reviews` | 查询课程 / 作业 / 复习 |
+| `get_user_profile` | 查看用户画像（作息 / 学习到的偏好 / 证据）——回答「为什么这么排」 |
+| `update_user_profile` | 对话调整画像（如「我是夜猫」「晚上 9 点后别排脑力任务」「每天 17:00-18:00 跑步」） |
 
 **微信一句话加任务**（需要先配置任务库，见 4.6 节）：
 

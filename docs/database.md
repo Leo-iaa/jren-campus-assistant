@@ -29,6 +29,8 @@ misc_items ───────── 杂事项（独立表，也被 plan_items
 data_sources ────── 数据源绑定（Notion OAuth / Obsidian vault / iCal）
 calibration_stats ─ 课程 × 时段 × 难度 分桶校准统计
 plan_versions ───── 每日计划确认快照（版本化）
+user_profile ────── 用户画像特征（手动偏好 + 自动学习，含证据）
+profile_events ──── 用户行为痕迹（调整 / 完成 / 新增任务，学习规则的素材）
 ```
 
 ## 3. 表结构（DDL）
@@ -207,6 +209,53 @@ CREATE TABLE plan_versions (
 );
 ```
 
+### 3.12 `user_profile` —— 用户画像特征（Issue #63）
+
+```sql
+CREATE TABLE user_profile (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_key  TEXT NOT NULL UNIQUE,          -- 'rhythm' / 'no_brain_after' /
+                                              -- 'fixed_activities' /
+                                              -- 'prefer_bucket.<课程>' /
+                                              -- 'fit_bucket.<课程>' / 'late_worker'
+  feature_type TEXT NOT NULL,                 -- 'manual' | 'prefer_bucket' |
+                                              -- 'fit_bucket' | 'late_worker'
+  value        TEXT NOT NULL,                 -- 如 'evening' / '21:00' / JSON
+  confidence   INTEGER NOT NULL DEFAULT 0,    -- 学习特征：观察次数；手动条目恒 0
+  evidence     TEXT,                          -- 中文证据（可解释「为什么这么排」）
+  source       TEXT NOT NULL DEFAULT 'learned'
+               CHECK (source IN ('learned','manual')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+> 手动偏好（作息 rhythm / 晚间脑力截止 no_brain_after / 固定安排
+> fixed_activities）与自动学习特征（调整偏好 prefer_bucket / 完成时段
+> fit_bucket / 夜猫线索 late_worker）同表存储，`source` 区分来源。
+> 学习特征随观察窗口滑动：窗口内证据不再满足阈值时删除（画像始终反映
+> 「最近 14 天的真实行为」）。
+
+### 3.13 `profile_events` —— 用户行为痕迹（Issue #63）
+
+```sql
+CREATE TABLE profile_events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type   TEXT NOT NULL
+               CHECK (event_type IN ('adjust','done','add_task')),
+  occurred_at  TEXT NOT NULL,                 -- Asia/Shanghai 时间
+  plan_date    TEXT,                          -- 计划日期 YYYY-MM-DD
+  subject      TEXT NOT NULL,                 -- 学习对象键（课程名 / 标题）
+  item_type    TEXT NOT NULL,                 -- task/review/misc
+  from_bucket  TEXT,                          -- 调整前时段（仅 adjust）
+  to_bucket    TEXT,                          -- 调整后 / 完成 / 插入时段
+  start_time   TEXT,                          -- 最终开始时间 HH:MM
+  title        TEXT                           -- 冗余标题（证据展示用）
+);
+```
+
+> 行为明细是学习规则的素材与审计依据——画像证据可随时从明细重算；
+> `add_task` 事件只作留存，不触发学习（插入时段是算法选的，不是用户偏好）。
+
 ## 4. 关键设计决策
 
 | 决策点 | 选择 | 理由 |
@@ -219,9 +268,11 @@ CREATE TABLE plan_versions (
 | 复习计划 | 每知识点一行一个 seq | 状态独立（跳过/逾期），支持拖后重排 |
 | 外键策略 | 课程删除级联，任务置 NULL | 课程没了知识点复习全清；任务保留兜底 |
 | 时间格式 | TEXT（ISO-8601 局部） | SQLite 无原生时间类型，文本可排序可比较 |
+| 画像存储 | 特征条目表 + 行为明细表 | 特征可解释（带证据）、行为可审计（可重算）；学习规则 2-3 条起步（Issue #63） |
 
 ## 5. 后续演进
 
 - **多用户**：加 `users` 表，所有业务表加 `user_id` 外键 + 复合索引
 - **PostgreSQL**：TEXT 日期可直接迁移为 `DATE` / `TIMESTAMP`；`CHECK` 约束兼容
 - **明细审计**：需要时新增 `execution_logs` 明细表，`calibration_stats` 作为物化聚合
+  （画像侧已先行：`profile_events` 即行为明细，`user_profile` 为物化特征）
