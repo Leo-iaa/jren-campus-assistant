@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DataSourceType = Literal["notion", "obsidian", "ical", "caldav"]
+DataSourceType = Literal["notion", "obsidian", "ical", "caldav", "coros"]
 
 
 class DataSourceBase(BaseModel):
@@ -35,6 +35,7 @@ REDACTED_CONFIG_KEYS = (
     "client_secret",
     "oauth_state",
     "oauth_code_verifier",
+    "oauth_session",
     "client_id",
 )
 
@@ -112,5 +113,27 @@ class OAuthCallbackRequest(BaseModel):
 
 
 class OAuthCallbackRead(BaseModel):
+    source_id: int
+    ok: bool = True
+
+
+# ---------- COROS OAuth（官方 CLI 登录会话流） ----------
+class CorosOAuthStartRequest(BaseModel):
+    """发起 COROS 授权（缺省 source_id 时自动新建 coros 数据源）。"""
+
+    source_id: int | None = None
+
+
+class CorosLoginStartRead(BaseModel):
+    source_id: int
+    login_url: str  # 用户在浏览器（手机/电脑均可）打开完成 COROS 登录
+
+
+class CorosOAuthFinishRequest(BaseModel):
+    source_id: int
+    timeout: int | None = Field(default=30, description="轮询等待秒数（1-300，默认 30）")
+
+
+class CorosOAuthFinishRead(BaseModel):
     source_id: int
     ok: bool = True

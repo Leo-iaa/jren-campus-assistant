@@ -24,6 +24,8 @@ EXPECTED_TOOLS = [
     "get_reviews",
     "get_user_profile",
     "update_user_profile",
+    "get_running_data",
+    "generate_running_plan",
 ]
 
 HEADERS = {"Accept": "application/json, text/event-stream"}

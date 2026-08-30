@@ -18,6 +18,7 @@ from backend.mcp_client.service import (
     _load_config,
     _save_config,
     _token_dict,
+    build_coros_oauth,
     build_oauth_client,
     sync_data_source,
 )
@@ -34,6 +35,10 @@ from backend.schemas.datasource import (
     OAuthStartRequest,
     SyncRequest,
     SyncResultRead,
+    CorosLoginStartRead,
+    CorosOAuthFinishRead,
+    CorosOAuthFinishRequest,
+    CorosOAuthStartRequest,
 )
 
 router = APIRouter(prefix="/data-sources", tags=["数据源"])
@@ -128,6 +133,115 @@ def sync_source(source_id: int, payload: SyncRequest | None = None, db: Session 
         raise HTTPException(status_code=502, detail=f"MCP 调用失败：{exc}") from exc
     db.commit()
     return result
+
+
+# ---------- COROS OAuth（官方 CLI 登录会话流） ----------
+
+
+@router.post("/coros/oauth/start", response_model=CorosLoginStartRead, summary="COROS 授权起点：创建登录会话，返回浏览器登录链接")
+def coros_oauth_start(payload: CorosOAuthStartRequest | None = None, db: Session = Depends(get_db)):
+    """创建 COROS CLI 登录会话（device 流）：用户在浏览器打开 login_url 登录。
+
+    登录会话（PKCE verifier / poll token 等）暂存到数据源 config.oauth_session，
+    用户完成登录后调用 /coros/oauth/finish 兑换 token。
+    """
+    import json as _json
+
+    from backend.mcp_client import coros as coros_mod
+
+    config: dict = {}
+    if payload is not None and payload.source_id is not None:
+        source = get_or_404(db, DataSource, payload.source_id)
+        if source.source_type != "coros":
+            raise HTTPException(status_code=400, detail="该数据源不是 coros 类型")
+        config = _load_config(source)
+    else:
+        source = DataSource(source_type="coros", name="COROS", config="{}", enabled=1)
+        db.add(source)
+        db.flush()
+
+    oauth = build_coros_oauth(config)
+    try:
+        session = coros_mod.start_login(oauth)
+    except CorosError as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    config["oauth_session"] = _json.dumps(
+        {
+            "client_id": session.client_id,
+            "code_verifier": session.code_verifier,
+            "state": session.state,
+            "session_id": session.session_id,
+            "poll_token": session.poll_token,
+            "login_url": session.login_url,
+            "poll_interval": session.poll_interval,
+        },
+        ensure_ascii=False,
+    )
+    _save_config(source, config)
+    db.commit()
+    return CorosLoginStartRead(source_id=source.id, login_url=session.login_url)
+
+
+@router.post("/coros/oauth/finish", response_model=CorosOAuthFinishRead, summary="COROS 授权完成：轮询登录结果并保存 token")
+def coros_oauth_finish(payload: CorosOAuthFinishRequest, db: Session = Depends(get_db)):
+    """用户在浏览器完成 COROS 登录后调用：轮询会话状态并兑换 token。"""
+    import json as _json
+    import time as _time
+
+    from backend.mcp_client import coros as coros_mod
+    from backend.mcp_client.coros import CorosLoginSession
+
+    source = get_or_404(db, DataSource, payload.source_id)
+    if source.source_type != "coros":
+        raise HTTPException(status_code=400, detail="该数据源不是 coros 类型")
+    config = _load_config(source)
+    raw = config.get("oauth_session")
+    if not raw:
+        raise HTTPException(status_code=400, detail="没有进行中的 COROS 授权：请先调用 /coros/oauth/start")
+    try:
+        data = _json.loads(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="暂存的授权会话已损坏，请重新发起授权") from None
+
+    session = CorosLoginSession(
+        client_id=data["client_id"],
+        code_verifier=data["code_verifier"],
+        state=data["state"],
+        session_id=data["session_id"],
+        poll_token=data["poll_token"],
+        login_url=data.get("login_url", ""),
+        poll_interval=float(data.get("poll_interval") or 3.0),
+    )
+    oauth = build_coros_oauth(config)
+    timeout = min(max(float(payload.timeout or 30), 1.0), 300.0)
+    try:
+        token = coros_mod.finish_login(oauth, session, timeout=timeout)
+    except CorosAuthError as exc:
+        # 未完成 / 已过期：保持会话可重试（用户可能还没点完登录页）
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except CorosError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    token.setdefault("client_id", session.client_id)
+    config["tokens"] = token
+    config.pop("oauth_session", None)
+    _save_config(source, config)
+    db.commit()
+    return CorosOAuthFinishRead(source_id=source.id)
+
+
+@router.post("/coros/oauth/cancel", summary="取消进行中的 COROS 授权（清理暂存会话）")
+def coros_oauth_cancel(payload: CorosOAuthFinishRequest, db: Session = Depends(get_db)):
+    source = get_or_404(db, DataSource, payload.source_id)
+    if source.source_type != "coros":
+        raise HTTPException(status_code=400, detail="该数据源不是 coros 类型")
+    config = _load_config(source)
+    config.pop("oauth_session", None)
+    _save_config(source, config)
+    db.commit()
+    return {"source_id": source.id, "cancelled": True}
 
 
 # ---------- Notion OAuth ----------
