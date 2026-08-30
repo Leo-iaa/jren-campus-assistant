@@ -7,7 +7,7 @@
     uvicorn main:app --reload
 
 MCP Server（Streamable HTTP）挂载在 /mcp 路径（WorkBuddy 接入地址：
-http://<局域网IP>:8000/mcp），其会话管理器生命周期由本应用 lifespan 接管；
+http://<局域网IP>:8001/mcp），其会话管理器生命周期由本应用 lifespan 接管；
 APScheduler 21:00 定时任务同样在 lifespan 中按配置启停。
 """
 from collections.abc import Callable
@@ -63,7 +63,7 @@ def create_app(db_factory: Callable[[], Session] | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # MCP Server 暴露层：WorkBuddy 连接 http://<局域网IP>:8000/mcp
+    # MCP Server 暴露层：WorkBuddy 连接 http://<局域网IP>:8001/mcp
     # 用 Route 直接挂 ASGI 端点（而非 Mount），避免 /mcp → /mcp/ 的 307 重定向
     app.router.routes.insert(0, Route("/mcp", endpoint=mcp_app, name="mcp"))
 

@@ -16,7 +16,7 @@
 
 ```
 WorkBuddy（MCP 客户端，微信远程）
-   │  Streamable HTTP：http://127.0.0.1:8000/mcp（方案 A 同机）
+   │  Streamable HTTP：http://127.0.0.1:8001/mcp（方案 A 同机）
    ▼
 backend/mcp_server/server.py    ← 11 个 MCP 工具（薄封装）
    ▼
@@ -31,14 +31,14 @@ backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/�
 
 ```bash
 # 仓库根目录
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --host 0.0.0.0 --port 8001
 ```
 
 - `--host 0.0.0.0`：**必须**，否则 WorkBuddy（手机 / 其他设备）连不上
 - 启动日志会出现：`MCP 定时任务已启动：每天 21:00 生成次日计划`（APScheduler 兜底）
 - 验证：
-  - `curl http://127.0.0.1:8000/health` → `{"status":"ok","database":"connected"}`
-  - 浏览器打开 `http://127.0.0.1:8000/docs` 可看 REST API
+  - `curl http://127.0.0.1:8001/health` → `{"status":"ok","database":"connected"}`
+  - 浏览器打开 `http://127.0.0.1:8001/docs` 可看 REST API
 
 > ⚠️ 首次使用前记得 `python -m backend.scripts.init_db` 初始化数据库（幂等）。
 
@@ -61,7 +61,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 > ⚠️ 两个脚本必须保持 **ASCII 纯英文注释**：cmd.exe 与 WSH 按 ANSI 代码页解析脚本文件，
 > UTF-8 中文注释会被拆成乱码命令导致启动失败（实测踩坑）。
 
-**自查服务是否在跑（大白话）**：浏览器打开 `http://127.0.0.1:8000/health`，
+**自查服务是否在跑（大白话）**：浏览器打开 `http://127.0.0.1:8001/health`，
 看到 `{"status":"ok",...}` 就是正常；打不开则双击 `start_backend.bat` 手动启动，
 或重启电脑让自启重新生效。
 
@@ -180,7 +180,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 2. **打开 WorkBuddy → 设置 → MCP 服务**（或「MCP 管理」），添加服务器：
    - 名称随意（如 `jren-campus-assistant`）
    - 类型：**http**（Streamable HTTP）
-   - 地址：`http://127.0.0.1:8000/mcp`
+   - 地址：`http://127.0.0.1:8001/mcp`
 3. 若 WorkBuddy 支持直接编辑配置文件，等价配置（mcp.json）：
 
    ```json
@@ -188,7 +188,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
      "mcpServers": {
        "jren-campus-assistant": {
          "type": "http",
-         "url": "http://127.0.0.1:8000/mcp"
+         "url": "http://127.0.0.1:8001/mcp"
        }
      }
    }
@@ -198,7 +198,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
    试着问「查询课程列表」或「今天的计划是什么」
 
 > 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址
-> `http://<电脑IP>:8000/mcp` 并确保防火墙放行 8000 端口、两端同一网络。
+> `http://<电脑IP>:8001/mcp` 并确保防火墙放行 8000 端口、两端同一网络。
 
 ## 5. WorkBuddy 定时任务配置（主通道，已实测）
 
@@ -344,9 +344,9 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 ## 10. 常见问题（FAQ）
 
 **Q：WorkBuddy 提示连不上 / 超时？**
-A：① 后端是否在跑（浏览器开 `http://127.0.0.1:8000/health` 应返回 ok）；② MCP 地址是否
-`http://127.0.0.1:8000/mcp`；③ 类型是否选 **http**（Streamable HTTP）；④ 若 WorkBuddy 装在其他设备，
-改用 `http://<电脑IP>:8000/mcp` 并确认防火墙放行 8000、两端同一网络。
+A：① 后端是否在跑（浏览器开 `http://127.0.0.1:8001/health` 应返回 ok）；② MCP 地址是否
+`http://127.0.0.1:8001/mcp`；③ 类型是否选 **http**（Streamable HTTP）；④ 若 WorkBuddy 装在其他设备，
+改用 `http://<电脑IP>:8001/mcp` 并确认防火墙放行 8000、两端同一网络。
 
 **Q：WorkBuddy 装到别的设备时局域网 IP 变化了怎么办？**
 A：家用路由器一般 DHCP 分配，重启可能变。建议在路由器里给电脑绑定静态 IP，
