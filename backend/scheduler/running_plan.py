@@ -93,8 +93,22 @@ def _parse_date_prefix(value: str | None) -> str | None:
     return value[:10]
 
 
+#: 计入跑量的运动类型（COROS SportType 实测：100=Outdoor Run；名称含 run/jog 均算）
+_RUNNING_TYPE_KEYWORDS = ("run", "jog")
+_RUNNING_SPORT_CODES = {"100"}
+
+
+def _is_running(rec: RunningActivity) -> bool:
+    """该活动是否计入跑量（跑步类；徒步/骑行等不算，Issue #65 真实数据校准）。"""
+    wt = (rec.workout_type or "").lower()
+    if any(k in wt for k in _RUNNING_TYPE_KEYWORDS):
+        return True
+    raw_code = str(rec.raw.get("SportType") or rec.raw.get("sportType") or "")
+    return raw_code in _RUNNING_SPORT_CODES
+
+
 def weekly_distance_km(activities: list[RunningActivity], *, end_date: str | None = None) -> float | None:
-    """近 7 天总跑量（km）；按活动日期前缀聚合。无数据返回 None。"""
+    """近 7 天总跑量（km，只统计跑步）；按活动日期前缀聚合。无数据返回 None。"""
     from datetime import date, timedelta
 
     if not activities:
@@ -104,6 +118,8 @@ def weekly_distance_km(activities: list[RunningActivity], *, end_date: str | Non
     total = 0.0
     seen = False
     for a in activities:
+        if not _is_running(a):
+            continue
         d = _parse_date_prefix(a.date)
         if d is None:
             continue
@@ -138,21 +154,26 @@ def _hard_days(activities: list[RunningActivity]) -> list[str]:
 
 
 def _recovery_level(snapshot: RunningSnapshot) -> str:
-    """恢复等级（poor/moderate/good），容错提取；默认 moderate。"""
+    """恢复等级（poor/moderate/good）；优先恢复百分比，文字等级只做兜底。
+
+    （真实数据校准 #65：COROS 等级是「Heavy training allowed」这类文案，
+    子串匹配易误判——如 'allowed' 含 'low'——故百分比优先。）
+    """
     rec = snapshot.recovery or {}
+    pct = rec.get("recoveryPercentage")
+    if isinstance(pct, (int, float)):
+        return "poor" if pct < 40 else ("good" if pct > 75 else "moderate")
     for key in ("recoveryLevel", "recovery_level", "level"):
         v = rec.get(key)
         if isinstance(v, str) and v.strip():
             lv = v.strip().lower()
-            for name in ("poor", "weak", "low"):
-                if name in lv:
-                    return "poor"
-            for name in ("good", "excellent", "high"):
-                if name in lv:
-                    return "good"
+            # 按词匹配（避免 'allowed' 误含 'low' 之类子串陷阱）
+            if any(k in lv for k in ("heavy", "full", "ready", "good", "excellent", "high")):
+                return "good"
+            if any(k in lv for k in ("light", "rest", "poor", "low")):
+                return "poor"
             return "moderate"
         if isinstance(v, (int, float)):
-            # 百分比形态：<40 差，>75 好
             return "poor" if v < 40 else ("good" if v > 75 else "moderate")
     return "moderate"
 

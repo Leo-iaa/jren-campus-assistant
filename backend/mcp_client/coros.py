@@ -348,6 +348,96 @@ def _json_from_result(result: dict) -> object:
         return text
 
 
+# ---------- 官方工具文本结果解析（2026-08-30 真实账号实测格式） ----------
+# 官方工具返回人类可读的结构化文本（非 JSON），按实测格式逐段解析；
+# 若官方改动格式，只需更新本节解析器。
+
+_RECORD_HEADER_RE = re.compile(r"^\s*\d+\.\s+(.+?)\s+—\s+(\d{4}-\d{2}-\d{2})", re.M)
+_DURATION_RE = re.compile(r"Duration:\s*(\d{1,3}):(\d{2})(?::(\d{2}))?")
+_DISTANCE_RE = re.compile(r"Distance:\s*([\d.]+)\s*km")
+_PACE_RE = re.compile(r"Average Pace:\s*(\d{1,2}):(\d{2})\s*/km")
+_HR_RE = re.compile(r"Avg HR:\s*(\d+)")
+
+
+def _parse_duration_seconds(m: re.Match) -> int:
+    """Duration 字段 → 秒。COROS 规则（实测）：三段是 H:MM:SS，两段是 M:SS。"""
+    if m.group(3) is not None:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+
+def _parse_sport_records_text(text: str) -> list[dict]:
+    """querySportRecords 文本 → 记录列表（含跑步与其它运动，调用方按需过滤）。"""
+    headers = list(_RECORD_HEADER_RE.finditer(text))
+    records: list[dict] = []
+    for i, head in enumerate(headers):
+        body = text[head.end(): headers[i + 1].start() if i + 1 < len(headers) else len(text)]
+        rec: dict = {"sportTypeName": head.group(1).strip(), "date": head.group(2)}
+        if (m := _DURATION_RE.search(body)):
+            rec["durationSeconds"] = _parse_duration_seconds(m)
+        if (m := _DISTANCE_RE.search(body)):
+            rec["distanceKm"] = float(m.group(1))
+        if (m := _PACE_RE.search(body)):
+            rec["avgPaceSecPerKm"] = int(m.group(1)) * 60 + int(m.group(2))
+        if (m := _HR_RE.search(body)):
+            rec["avgHeartRate"] = int(m.group(1))
+        records.append(rec)
+    return records
+
+
+def _parse_recovery_text(text: str) -> dict:
+    """queryRecoveryStatus 文本 → 恢复状态 dict。"""
+    result: dict = {}
+    if (m := re.search(r"Recovery:\s*(\d+)\s*%", text)):
+        result["recoveryPercentage"] = int(m.group(1))
+    if (m := re.search(r"Level:\s*(.+)", text)):
+        result["recoveryLevel"] = m.group(1).strip()
+    if (m := re.search(r"Estimated Full Recovery:\s*(.+)", text)):
+        result["estimatedFullRecovery"] = m.group(1).strip()
+    return result
+
+
+def _parse_fitness_text(text: str) -> dict:
+    """queryFitnessAssessmentOverview 文本 → 体能评估 dict。"""
+    result: dict = {}
+    if (m := re.search(r"VO2max:\s*([\d.]+)", text)):
+        result["vo2Max"] = float(m.group(2)) if m.lastindex and m.lastindex >= 2 else float(m.group(1))
+    if (m := re.search(r"Running Level:\s*(\d+)", text)):
+        result["runningLevel"] = int(m.group(1))
+    if (m := re.search(r"Threshold Pace:\s*(\d{1,2}):(\d{2})\s*/km", text)):
+        result["thresholdPaceSecPerKm"] = int(m.group(1)) * 60 + int(m.group(2))
+    for label, key in (("5 km", "5k"), ("10 km", "10k"), ("Half Marathon", "half_marathon"), ("(?<!Half )Marathon", "marathon")):
+        m = re.search(rf"{label} Prediction:\s*([\d:]+)", text)
+        if m:
+            result[f"{key}_prediction"] = m.group(1)
+    return result
+
+
+def _parse_load_text(text: str) -> dict:
+    """queryTrainingLoadAssessment 文本 → 最新一天的负荷 dict（首个日期块为当天）。"""
+    result: dict = {}
+    if (m := re.search(r"(\d{4}-\d{2}-\d{2})", text)):
+        result["date"] = m.group(1)
+    if (m := re.search(r"Comment:\s*(.+)", text)):
+        result["comment"] = m.group(1).strip()
+    if (m := re.search(r"Short-Term Load:\s*([\d.]+)", text)):
+        result["shortTermLoad"] = float(m.group(1))
+    if (m := re.search(r"Long-Term Load:\s*([\d.]+)", text)):
+        result["longTermLoad"] = float(m.group(1))
+    if (m := re.search(r"Load Ratio:\s*([\d.]+)", text)):
+        result["loadRatio"] = float(m.group(1))
+    return result
+
+
+#: 工具名 → 文本解析器（返回文本形态时按工具解析；未收录工具原样返回字符串）
+_TEXT_PARSERS: dict[str, object] = {
+    "querySportRecords": _parse_sport_records_text,
+    "queryRecoveryStatus": _parse_recovery_text,
+    "queryFitnessAssessmentOverview": _parse_fitness_text,
+    "queryTrainingLoadAssessment": _parse_load_text,
+}
+
+
 def _iter_records(obj: object) -> list[dict]:
     """官方工具返回形态容错：{records: [...]} / {results: [...]} / 裸数组 / 单对象。"""
     if isinstance(obj, list):
@@ -466,7 +556,11 @@ class CorosAdapter:
             result = client.call_tool(name, arguments)
         except JsonRpcError as exc:
             raise CorosError(f"COROS MCP {name} 调用失败：{exc}") from exc
-        return _json_from_result(result)
+        obj = _json_from_result(result)
+        # 官方工具实测返回结构化文本（非 JSON）：按工具名解析为 dict/list
+        if isinstance(obj, str) and name in _TEXT_PARSERS:
+            return _TEXT_PARSERS[name](obj)
+        return obj
 
     def list_tools(self) -> list[dict]:
         client = self._get_client()
