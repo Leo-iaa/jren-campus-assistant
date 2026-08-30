@@ -9,10 +9,10 @@ REM ============================================================
 REM cd to repo root (this script lives in backend\scripts\)
 cd /d "%~dp0..\.."
 
-REM skip if port 8001 is already listening (avoid double start)
-netstat -ano | findstr /c:":8001 " | findstr /c:"LISTENING" >nul 2>&1
+REM skip if port 28070 is already listening (avoid double start)
+netstat -ano | findstr /c:":28070 " | findstr /c:"LISTENING" >nul 2>&1
 if not errorlevel 1 (
-  echo [%date% %time%] port 8001 already in use, skip start >> "backend\data\server.log" 2>nul
+  echo [%date% %time%] port 28070 already in use, skip start >> "backend\data\server.log" 2>nul
   exit /b 0
 )
 
@@ -23,7 +23,7 @@ REM set JREN_NOTION_CALENDAR_DB=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 REM ---- start backend ----
 echo [%date% %time%] starting uvicorn >> "backend\data\server.log" 2>nul
 if exist "backend\.venv\Scripts\python.exe" (
-  "backend\.venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8001 >> "backend\data\server.log" 2>&1
+  "backend\.venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 28070 >> "backend\data\server.log" 2>&1
 ) else (
-  py -3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8001 >> "backend\data\server.log" 2>&1
+  py -3 -m uvicorn backend.main:app --host 0.0.0.0 --port 28070 >> "backend\data\server.log" 2>&1
 )

@@ -14,7 +14,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE_URL = "http://127.0.0.1:8001"
+BASE_URL = "http://127.0.0.1:28070"
 DEFAULT_ICS = "C:/Users/LEO/Desktop/2026春夏.ics"
 
 

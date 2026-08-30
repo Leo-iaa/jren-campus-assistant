@@ -19,7 +19,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE_URL = "http://127.0.0.1:8001"
+BASE_URL = "http://127.0.0.1:28070"
 NOTION_API = "https://api.notion.com"
 NOTION_VERSION = "2022-06-28"
 #: 页面里递归查找内嵌数据库的最大深度（防异常深嵌套页面拖慢脚本）
