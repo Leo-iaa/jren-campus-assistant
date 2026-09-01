@@ -176,6 +176,8 @@ def _sync_ical(db, source: DataSource, ics_content: str | None = None, mode: str
                     end_time=item.end_time,
                     location=item.location,
                     release_slot=0,
+                    starts_on=item.starts_on,
+                    ends_on=item.ends_on,
                 )
             )
             created += 1
@@ -183,6 +185,8 @@ def _sync_ical(db, source: DataSource, ics_content: str | None = None, mode: str
             if mode == "overwrite":
                 session.end_time = item.end_time
                 session.location = item.location
+                session.starts_on = item.starts_on
+                session.ends_on = item.ends_on
                 updated += 1
             else:
                 changed = False
@@ -191,6 +195,13 @@ def _sync_ical(db, source: DataSource, ics_content: str | None = None, mode: str
                     changed = True
                 if session.location is None and item.location:
                     session.location = item.location
+                    changed = True
+                # 周次区间：仅在尚未设置时补填（不覆盖手改 / 已导入的区间）
+                if session.starts_on is None and item.starts_on:
+                    session.starts_on = item.starts_on
+                    changed = True
+                if session.ends_on is None and item.ends_on:
+                    session.ends_on = item.ends_on
                     changed = True
                 if changed:
                     updated += 1

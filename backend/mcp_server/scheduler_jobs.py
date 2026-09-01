@@ -1,15 +1,19 @@
-"""APScheduler 定时任务：每天 21:00 自动生成次日计划（后端兜底）。
+"""APScheduler 定时任务：每天 21:00 自动生成次日计划并直达日历（后端兜底）。
 
 设计依据 docs/vision.md「提醒链路（方案 A）」：WorkBuddy 的 21:00 定时任务是
 主通道；本模块保证即使 WorkBuddy 未触发 / 未配置，只要后端进程在运行，
-次日计划也会在每晚定时生成（草案，等待用户确认）。
+次日计划也会在每晚定时生成 **并自动确认写入 Notion 日历**（auto_confirm，
+2026-08-31 起：原草案模式连续两晚因确认环节断链导致日历无写入）。
 
 - 触发时间：``JREN_MCP_PLAN_GENERATE_TIME``（默认 21:00，HH:MM，Asia/Shanghai）
 - 开关：``JREN_MCP_SCHEDULER_ENABLED``（默认 true；测试 / 开发可关闭）
-- 任务体只生成草案并记日志；确认与 Notion 日历写入由 confirm_plan 负责
+- 任务体：generate_plan → confirm_plan（含 Notion 日历写入），结果记日志
+- 幂等：generate_plan 对已有 confirmed 项的日期自动跳过重排（has_confirmed 保护），
+  confirm_plan 写日历按 (日期, 时段) 幂等去重（created/updated/unchanged）
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -43,28 +47,52 @@ def _parse_generate_time(value: str) -> tuple[int, int]:
     return hour, minute
 
 
+def _build_writer_safe(db):
+    """构造 Notion 日历 writer；未绑定/配置异常返回 (None, error)。可被测试替换。"""
+    from backend.mcp_server.notion_calendar import NotionCalendarError, build_writer
+
+    try:
+        return build_writer(db), None
+    except NotionCalendarError as exc:
+        return None, str(exc)
+
+
 def generate_tomorrow_plan_job() -> None:
-    """定时任务体：生成次日计划草案（异常仅记日志，不中断调度器）。"""
+    """定时任务体：生成次日计划并自动确认写入 Notion 日历（异常仅记日志，不中断调度器）。"""
     from backend.database import SessionLocal
-    from backend.mcp_server.service import generate_plan, tomorrow
+    from backend.mcp_server.service import confirm_plan, generate_plan, tomorrow
 
     plan_date = tomorrow()
     try:
         with SessionLocal() as db:
             result = generate_plan(db, plan_date)
-        logger.info(
-            "定时生成次日计划完成：date=%s placed=%d dropped=%d skipped=%d",
-            plan_date.isoformat(),
-            result.placed_count,
-            len(result.dropped),
-            len(result.skipped),
-        )
-        if result.dropped or result.skipped:
-            logger.warning(
-                "次日计划有未放置/跳过项：dropped=%s skipped=%s",
-                result.dropped,
-                result.skipped,
+            logger.info(
+                "定时生成次日计划完成：date=%s placed=%d dropped=%d skipped=%d",
+                plan_date.isoformat(),
+                result.placed_count,
+                len(result.dropped),
+                len(result.skipped),
             )
+            # auto_confirm：生成后立即确认并写入 Notion 日历（与 MCP 工具
+            # generate_tomorrow_plan(auto_confirm=true) 完全同路径）
+            writer, notion_error = _build_writer_safe(db)
+            confirmed = confirm_plan(db, plan_date, calendar_writer=writer)
+            sync = confirmed.notion_sync
+            if notion_error and sync is None:
+                sync = {"error": notion_error}
+            logger.info(
+                "定时确认次日计划完成：date=%s confirmed=%d version=%d notion_sync=%s",
+                plan_date.isoformat(),
+                confirmed.confirmed_count,
+                confirmed.version,
+                json.dumps(sync, ensure_ascii=False) if sync else "null",
+            )
+            if result.dropped or result.skipped:
+                logger.warning(
+                    "次日计划有未放置/跳过项：dropped=%s skipped=%s",
+                    result.dropped,
+                    result.skipped,
+                )
     except Exception:  # noqa: BLE001 —— 定时任务不允许崩溃
         logger.exception("定时生成次日计划失败（date=%s）", plan_date.isoformat())
 

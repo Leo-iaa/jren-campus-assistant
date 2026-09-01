@@ -60,6 +60,11 @@ class CourseSession(Base):
     start_time: Mapped[str] = mapped_column(String, nullable=False)  # '08:00'
     end_time: Mapped[str] = mapped_column(String, nullable=False)
     location: Mapped[str | None] = mapped_column(String)
+    # 生效周次区间（'YYYY-MM-DD'，闭区间）；为空表示整学期有效。
+    # 用于前后半学期同星期同时段的不同课程（如机械原理Ⅱ/航空航天材料工程）
+    # 在 ICS 中通过 RRULE 的 COUNT/UNTIL 推导，落库后由 generate_plan 按目标日期过滤。
+    starts_on: Mapped[str | None] = mapped_column(String, nullable=True)
+    ends_on: Mapped[str | None] = mapped_column(String, nullable=True)
     # B/C 档课程：该时段是否释放给其他任务（0/1）
     release_slot: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 

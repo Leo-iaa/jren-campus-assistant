@@ -52,7 +52,9 @@ def test_plan_normal_week_increases_10_percent():
         load={"loadRatio": 1.1},
         fitness={"vo2Max": 52},
     )
-    plan = generate_week_plan(snap, today_iso="2026-08-30")
+    # end_date 与 _activities 的固定日期窗对齐（weekly_distance_km 默认用真实今天，
+    # 模拟数据会随真实日期推移滑出 7 天窗口 → 必须显式锚定）
+    plan = generate_week_plan(snap, today_iso="2026-08-30", end_date="2026-08-30")
     assert plan.weekly_distance_km == 38.5  # 35 × 1.1
     kinds = [s.kind for s in plan.sessions]
     assert EASY in kinds and LONG_RUN in kinds
@@ -68,7 +70,7 @@ def test_plan_poor_recovery_reduces_load():
         recovery={"recoveryLevel": "poor"},
         load={"loadRatio": 1.4},
     )
-    plan = generate_week_plan(snap, today_iso="2026-08-30")
+    plan = generate_week_plan(snap, today_iso="2026-08-30", end_date="2026-08-30")
     assert plan.weekly_distance_km == 24.5  # 35 × 0.7 减量
     kinds = [s.kind for s in plan.sessions]
     assert INTERVAL not in kinds and TEMPO not in kinds  # 恢复差不排强度

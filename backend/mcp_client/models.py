@@ -39,6 +39,8 @@ class CourseSessionItem:
     location: str | None = None
     teacher: str | None = None
     course_code: str | None = None
+    starts_on: str | None = None  # 生效起始日期（含），'YYYY-MM-DD'；空=整学期
+    ends_on: str | None = None    # 生效结束日期（含），'YYYY-MM-DD'；空=整学期
 
 
 @dataclass(frozen=True)

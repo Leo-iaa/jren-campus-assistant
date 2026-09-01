@@ -35,6 +35,8 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 #: 旧库升级时在此追加新列（幂等：缺列才执行 ALTER TABLE）。
 _ALTER_COLUMNS: list[tuple[str, str]] = [
     ("tasks", "task_type TEXT"),  # 任务类型（作业/实验/考试/其他，add_task 写入）
+    ("course_sessions", "starts_on TEXT"),  # 课程生效起始日期（含），闭区间；空=整学期
+    ("course_sessions", "ends_on TEXT"),    # 课程生效结束日期（含），闭区间；空=整学期
 ]
 
 
