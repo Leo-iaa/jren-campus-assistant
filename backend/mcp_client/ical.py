@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -37,6 +37,8 @@ class RawEvent:
     teacher: str | None
     first_date: date  # 首次上课日期（用于「取最新」排序）
     uid: str
+    starts_on: str | None = None  # 生效起始日期（含），'YYYY-MM-DD'；空=整学期
+    ends_on: str | None = None    # 生效结束日期（含），'YYYY-MM-DD'；空=整学期
 
 
 def _local_datetime(dt: date | datetime) -> datetime:
@@ -95,6 +97,22 @@ def _extract_event(comp: icalendar.cal.Component) -> tuple[RawEvent | None, list
     if str(freq).upper() != "WEEKLY":
         return None, [f"跳过非每周重复事件：{summary}（FREQ={freq}）"]
 
+    # 生效周次区间：从 RRULE 的 COUNT / UNTIL 推导（用于前后半学期错峰课程）
+    starts_on = start.date().isoformat()
+    ends_on = None
+    count = rrule.get("COUNT")
+    until = rrule.get("UNTIL")
+    if count is not None:
+        try:
+            cnt = int(count[0]) if isinstance(count, list) else int(count)
+        except (TypeError, ValueError):
+            cnt = None
+        if cnt is not None and cnt > 0:
+            ends_on = (start.date() + timedelta(weeks=cnt - 1)).isoformat()
+    elif until is not None:
+        u = until[0] if isinstance(until, list) else until
+        ends_on = u.date().isoformat() if hasattr(u, "date") else str(u)[:10]
+
     room, teacher = _split_location(str(comp.get("LOCATION") or ""))
     if room is None and teacher is None:
         # 兜底：DESCRIPTION 通常为 「第X-Y节\\n教室\\n教师」
@@ -112,6 +130,8 @@ def _extract_event(comp: icalendar.cal.Component) -> tuple[RawEvent | None, list
             teacher=teacher,
             first_date=start.date(),
             uid=str(comp.get("UID") or ""),
+            starts_on=starts_on,
+            ends_on=ends_on,
         ),
         warnings,
     )
@@ -143,6 +163,8 @@ def parse_ics(content: str) -> tuple[list[CourseSessionItem], list[str]]:
             end_time=event.end_time,
             location=event.location,
             teacher=event.teacher,
+            starts_on=event.starts_on,
+            ends_on=event.ends_on,
         )
         for event in merged.values()
     ]

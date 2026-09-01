@@ -158,6 +158,10 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         raise ValueError("设置 task_duration_minutes / review_duration_minutes 必须为正整数")
 
     # 1. 固定课程块（当日星期几的课程时间块；B/C 档 release_slot=1 释放给其他任务）
+    #    周次区间（starts_on/ends_on）为空表示整学期有效；否则仅保留目标日期落在
+    #    生效区间内的课程（支持前后半学期同星期同时段的不同课程错峰，如机械原理Ⅱ/
+    #    航空航天材料工程）
+    plan_iso = plan_date.isoformat()
     sessions = (
         db.query(CourseSession)
         .join(Course, CourseSession.course_id == Course.id)
@@ -165,6 +169,12 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         .order_by(CourseSession.start_time)
         .all()
     )
+    sessions = [
+        s
+        for s in sessions
+        if (s.starts_on is None or s.starts_on <= plan_iso)
+        and (s.ends_on is None or s.ends_on >= plan_iso)
+    ]
     course_drafts = [
         PlanItemDraft(
             date=plan_date,
