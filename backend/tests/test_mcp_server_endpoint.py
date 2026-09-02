@@ -134,18 +134,20 @@ def test_mcp_generate_plan_end_to_end(client, db_session):
 
     session_id = handshake(client)
     generated = call_tool(client, session_id, "generate_tomorrow_plan", {"date": "2026-08-19"}, mid=11)
-    assert generated["placed"] == 1
+    # S 档课程 → 课程块 + 课后 1 小时复习（Issue #74）
+    assert generated["placed"] == 2
     assert generated["dropped"] == []
     # 返回含完整计划文本（WorkBuddy 21:00 可直接推微信，不必只给一句话）
     assert "preview" in generated
     assert "高等数学" in generated["preview"] and "08:00" in generated["preview"]
+    assert "复习 · 高等数学（课后）" in generated["preview"]
 
     preview = call_tool(client, session_id, "get_today_plan_preview", {"date": "2026-08-19"}, mid=12)
     assert "高等数学" in preview
     assert "待确认" in preview
 
     confirmed = call_tool(client, session_id, "confirm_plan", {"date": "2026-08-19"}, mid=13)
-    assert confirmed["confirmed_count"] == 1
+    assert confirmed["confirmed_count"] == 2
     assert confirmed["version"] == 1
     # 未绑定 Notion 数据源 → 跳过日历同步（不报错）
     assert confirmed["notion_sync"] is None
@@ -196,9 +198,9 @@ def test_mcp_generate_plan_with_auto_confirm(client, db_session):
         client, session_id, "generate_tomorrow_plan",
         {"date": "2026-08-19", "auto_confirm": True}, mid=31,
     )
-    assert generated["placed"] == 1
+    assert generated["placed"] == 2
     confirm = generated["confirm"]
-    assert confirm["confirmed_count"] == 1
+    assert confirm["confirmed_count"] == 2
     assert confirm["version"] == 1
     assert confirm["notion_sync"] is None  # 测试环境无 Notion 源，静默跳过
     assert "自动确认" in generated["message"]
@@ -226,7 +228,7 @@ def test_mcp_adjust_plan_item_returns_message(client, db_session):
 
     session_id = handshake(client)
     generated = call_tool(client, session_id, "generate_tomorrow_plan", {"date": "2026-08-19"}, mid=33)
-    assert generated["placed"] == 1
+    assert generated["placed"] == 2  # S 档：课程块 + 课后复习（Issue #74）
     # 草案阶段：调整任一计划项（从数据库拿 id）
     from backend.models import PlanItem
 

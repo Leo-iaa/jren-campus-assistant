@@ -49,6 +49,11 @@ def test_course_tier_check_constraint(db_session):
     session.add(models.Course(name="非法档位", tier="X"))
     with pytest.raises(IntegrityError):
         session.commit()
+    # Issue #74 废除 C 档：C 不再是合法档位
+    session2 = db_session()
+    session2.add(models.Course(name="C档已废除", tier="C"))
+    with pytest.raises(IntegrityError):
+        session2.commit()
 
 
 def test_course_name_not_null(db_session):

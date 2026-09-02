@@ -3,10 +3,10 @@
 设计依据 docs/vision.md「复习策略：课程档位制」与 docs/architecture.md 2.4：
 
 - 档位序列（每门课在设置页指定，一次设置长期生效）：
-  - S 档：当晚 + 第 1/2/4/7/15 天
+  - S 档：当晚 + 第 1/2/4/7/15 天；课后另有 1 小时复习（由 generate_plan 注入日程）
   - A 档：当晚 + 第 1/2/4/7/15 天
   - B 档：当晚 + 第 1/7 天
-  - C 档：不安排复习（仅跟踪作业 / 考试 deadline）
+  - （Issue #74 废除 C 档，原 C 档课程并入 B 档）
 - 难度微调（1-5）：
   - 难度 ≥ 4：首次复习提前至课后 2 小时（日期不变，note 标注「课后 2 小时」）
   - 难度 ≤ 2：跳过当天晚上那次复习
@@ -34,7 +34,6 @@ TIER_OFFSETS: dict[str, tuple[int, ...]] = {
     "S": (0, 1, 2, 4, 7, 15),
     "A": (0, 1, 2, 4, 7, 15),
     "B": (0, 1, 7),
-    "C": (),
 }
 
 VALID_TIERS = frozenset(TIER_OFFSETS)
@@ -75,13 +74,13 @@ def build_review_schedule(
     """生成单个知识点的完整复习序列。
 
     参数：
-        course_tier: 课程档位 'S' | 'A' | 'B' | 'C'
+        course_tier: 课程档位 'S' | 'A' | 'B'
         difficulty: 知识点难度 1-5
         first_date: 首次复习日期（通常为上课当天）
         daily_cap: 每日复习上限。单个知识点自身序列每天至多一次复习，
             故该参数在单点场景不生效（批量场景见 :func:`apply_daily_cap`）。
     返回：
-        按复习次序排列的 :class:`ReviewDraft` 列表；C 档返回空列表。
+        按复习次序排列的 :class:`ReviewDraft` 列表。
     异常：
         ValueError: 档位或难度非法。
     """
@@ -112,7 +111,7 @@ def _offsets_for(course_tier: str, difficulty: int) -> tuple[int, ...]:
 
 def _validate(course_tier: str, difficulty: int) -> None:
     if course_tier not in VALID_TIERS:
-        raise ValueError(f"未知课程档位: {course_tier!r}（应为 S/A/B/C）")
+        raise ValueError(f"未知课程档位: {course_tier!r}（应为 S/A/B）")
     if difficulty not in VALID_DIFFICULTIES:
         raise ValueError(f"难度必须在 1-5 之间，收到: {difficulty!r}")
 

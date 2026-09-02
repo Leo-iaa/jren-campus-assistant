@@ -1,7 +1,7 @@
 """遗忘曲线调度器单元测试（纯逻辑，无网络/数据库依赖）。
 
-对齐 docs/vision.md 定稿决策：
-- 档位序列：S/A = 当晚+1/2/4/7/15；B = 当晚+1/7；C 不复习
+对齐 docs/vision.md 定稿决策（Issue #74 废除 C 档）：
+- 档位序列：S/A = 当晚+1/2/4/7/15；B = 当晚+1/7
 - 难度微调：≥4 首次复习提前至课后 2 小时（同日，note 标注）；≤2 跳过当晚
 - S 档难度≥4：额外增加一次（插在第 2 天与第 4 天之间）
 - 每日上限：批量生成时超出顺延次日（FIFO）
@@ -45,11 +45,6 @@ def test_b_tier_sequence():
     drafts = build_review_schedule("B", 3, D0)
     assert [d.seq for d in drafts] == [1, 2, 3]
     assert _offsets(drafts) == [0, 1, 7]
-
-
-def test_c_tier_no_reviews():
-    assert build_review_schedule("C", 3, D0) == []
-    assert build_review_schedule("C", 5, D0) == []  # 难度再高也不复习
 
 
 # ---------- 难度微调 ----------
@@ -98,6 +93,9 @@ def test_s_hard_and_easy_not_combined():
 def test_invalid_tier_raises():
     with pytest.raises(ValueError):
         build_review_schedule("D", 3, D0)
+    # Issue #74 废除 C 档：再传 C 直接报错
+    with pytest.raises(ValueError):
+        build_review_schedule("C", 3, D0)
 
 
 def test_invalid_difficulty_raises():

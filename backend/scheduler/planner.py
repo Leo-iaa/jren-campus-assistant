@@ -150,6 +150,7 @@ def build_plan_full(
             order,
             prefer_bucket=draft.preferred_bucket,
             curfew=item_curfew,
+            not_before=draft.not_before,
         )
         if hit is None:
             dropped.append(draft)
@@ -297,6 +298,7 @@ def _place(
     order: str,
     prefer_bucket: str | None = None,
     curfew: int | None = None,
+    not_before: time | None = None,
 ) -> tuple[int, list[tuple[str, int, int]]] | None:
     """把时长 duration 的项目放入最早可用的子窗，返回 (起始分钟, 新窗口列表)。
 
@@ -306,9 +308,12 @@ def _place(
       其余窗口随后（同段微调不影响时段归属，只影响窗口顺序）
     - ``curfew``：脑力截止分钟——窗口结束时间裁剪到 curfew（task/review 用；
       misc 传 None 不受限）
+    - ``not_before``：最早开始分钟——窗口起始时间抬到 not_before（S 档课后复习
+      紧排课后用；窗口起点早于该时间的部分不可用）
     - 起始分钟跳过与课程相同的分钟，保证 UNIQUE(date, start_time)
     - 放置后从左侧消费窗口（窗口缩小/删除）
     """
+    nb = _to_minutes(not_before) if not_before is not None else 0
     if order == "study_first":
         indices = [i for i, w in enumerate(windows) if w[0] == "study"] + [
             i for i, w in enumerate(windows) if w[0] == "free"
@@ -331,6 +336,7 @@ def _place(
         _label, ws, we = windows[i]
         if curfew is not None:
             we = min(we, curfew)
+        ws = max(ws, nb)  # not_before：窗口起点抬升（S 档课后复习紧排课后）
         if we - ws < duration:
             continue
         for s in range(ws, we - duration + 1):

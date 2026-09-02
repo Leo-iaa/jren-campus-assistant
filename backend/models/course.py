@@ -7,8 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.models.base import Base, shanghai_now
 
-# 课程档位（产品决策：S/A/B/C，见 docs/vision.md）
-COURSE_TIERS = ("S", "A", "B", "C")
+# 课程档位（产品决策：S/A/B，Issue #74 废除 C 档）
+COURSE_TIERS = ("S", "A", "B")
 
 
 class Course(Base):
@@ -16,7 +16,7 @@ class Course(Base):
 
     __tablename__ = "courses"
     __table_args__ = (
-        CheckConstraint("tier IN ('S','A','B','C')", name="ck_courses_tier"),
+        CheckConstraint("tier IN ('S','A','B')", name="ck_courses_tier"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

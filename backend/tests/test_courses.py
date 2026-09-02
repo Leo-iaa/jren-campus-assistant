@@ -35,7 +35,7 @@ def test_create_course_empty_name_422(client):
 def test_list_courses_and_filter_by_tier(client):
     client.post("/api/courses", json={"name": "高数", "tier": "A"})
     client.post("/api/courses", json={"name": "考研数学", "tier": "S"})
-    client.post("/api/courses", json={"name": "水课", "tier": "C"})
+    client.post("/api/courses", json={"name": "水课", "tier": "B"})
 
     all_resp = client.get("/api/courses")
     assert all_resp.status_code == 200

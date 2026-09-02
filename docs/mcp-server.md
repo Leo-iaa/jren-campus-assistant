@@ -77,7 +77,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 28070
 | `adjust_plan_item` | `item_id`、`start_time`、`end_time`、`title?` | JSON：更新后的计划项 + notion_sync + message | 调整单项时间/标题；冲突会报错。**该日计划已确认时自动同步更新 Notion 日历**（Issue #58） |
 | `add_task` | `title`（必填）、`due_date?`、`task_type?`、`course_id?`、`estimated_minutes?` | JSON：task / plan_action / plan_message / notion_sync | **一句话添加任务**：写本地 + Notion 任务库，并联动今日计划（详见下） |
 | `mark_done` | `item_id`、`actual_minutes?` | JSON：计划项 + 校准记录 | 标记完成；task/review 记录「预估 vs 实际」校准 |
-| `get_courses` | 无 | JSON 数组 | 课程列表（含 S/A/B/C 档位） |
+| `get_courses` | 无 | JSON 数组 | 课程列表（含 S/A/B 档位） |
 | `get_tasks` | `status?`（todo/doing/done/cancelled） | JSON 数组 | 作业任务列表（含类型 task_type） |
 | `get_reviews` | `due_date?`（YYYY-MM-DD） | JSON 数组 | 复习计划列表（含知识点与难度） |
 | `get_user_profile` | 无 | JSON | 用户画像：手动偏好（rhythm 作息 / no_brain_after 晚间脑力截止 / fixed_activities 固定安排）+ 自动学习特征（每条含 confidence 观察次数与 evidence 中文证据）+ 最近行为事件。回答「为什么这么排」 |

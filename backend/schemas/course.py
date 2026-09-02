@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"  # 'HH:MM'
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"  # 'YYYY-MM-DD'
 
-Tier = Literal["S", "A", "B", "C"]
+Tier = Literal["S", "A", "B"]
 
 
 # ---------- 课程 ----------
@@ -50,7 +50,7 @@ class CourseSessionBase(BaseModel):
     start_time: str = Field(pattern=TIME_PATTERN)
     end_time: str = Field(pattern=TIME_PATTERN)
     location: str | None = None
-    release_slot: int = Field(default=0, ge=0, le=1, description="B/C 档：该时段是否释放（0/1）")
+    release_slot: int = Field(default=0, ge=0, le=1, description="该时段是否释放给其他任务（0/1，预留字段）")
 
     @model_validator(mode="after")
     def _check_time_range(self):
