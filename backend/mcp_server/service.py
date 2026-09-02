@@ -178,6 +178,39 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         if (s.starts_on is None or s.starts_on <= plan_iso)
         and (s.ends_on is None or s.ends_on >= plan_iso)
     ]
+    # 1.5 用户画像偏好（Issue #63）：偏好时段 / 晚间脑力截止 / 固定安排屏障。
+    #     画像为空时全部为空 → 规划行为与旧版完全一致
+    prefs = profile_store.load_planner_prefs(db, plan_date)
+
+    # 1.8 B 档标注选任务（Issue #76）：先于课程草案构建——从当日未完成任务里
+    #     按 ddl 升序给每门 B 档课挑一件「课上可做的事」（一门课一件，不重复）；
+    #     被选中的任务不再单独排进计划（就在 B 档课上做，效率减半）。
+    #     无任务可标时回退通用文案。
+    iso = plan_date.isoformat()
+    pending_tasks = (
+        db.query(Task).filter(Task.status.in_(["todo", "doing"])).order_by(Task.id).all()
+    )
+    unexpired_tasks = [
+        t for t in pending_tasks
+        if not (t.deadline and t.deadline[:10] < iso)
+    ]
+    b_annotation: dict[int, str] = {}
+    annotated_task_ids: set[int] = set()
+    for s in sessions:
+        if s.course.tier != "B":
+            continue
+        if not unexpired_tasks:
+            b_annotation[s.id] = "可做别的事，效率减半"
+            continue
+        candidates = [t for t in unexpired_tasks if t.id not in annotated_task_ids]
+        if not candidates:
+            b_annotation[s.id] = "可做别的事，效率减半"
+            continue
+        candidates.sort(key=lambda t: (t.deadline or "9999-12-31", t.id))
+        pick = candidates[0]
+        annotated_task_ids.add(pick.id)
+        b_annotation[s.id] = f"可写{pick.title}"
+
     course_drafts = [
         PlanItemDraft(
             date=plan_date,
@@ -186,8 +219,8 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
             item_type="course",
             ref_id=s.id,
             title=(
-                # B 档标注（Issue #74）：照常占住日程，但提示该时段可做别的事
-                f"{s.course.name}（可做别的事，效率减半）"
+                # B 档标注（Issue #76）：括号里写明课上该干什么（如「可写计网作业」）
+                f"{s.course.name}（{b_annotation.get(s.id, '可做别的事，效率减半')}）"
                 if s.course.tier == "B"
                 else s.course.name
             ),
@@ -213,17 +246,12 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         if s.course.tier == "S"
     ]
 
-    # 1.5 用户画像偏好（Issue #63）：偏好时段 / 晚间脑力截止 / 固定安排屏障。
-    #     画像为空时全部为空 → 规划行为与旧版完全一致
-    prefs = profile_store.load_planner_prefs(db, plan_date)
-
-    # 2. 作业任务（未完成且 deadline 未早于当日；无预估时长用默认值）
-    iso = plan_date.isoformat()
-    pending_tasks = (
-        db.query(Task).filter(Task.status.in_(["todo", "doing"])).order_by(Task.id).all()
-    )
+    # 2. 作业任务（未完成且 deadline 未早于当日；无预估时长用默认值）。
+    #    已被 B 档标注选走的任务不再重复排（就在 B 档课上写，见 1.8）
     task_drafts: list[PlanItemDraft] = []
     for t in pending_tasks:
+        if t.id in annotated_task_ids:
+            continue
         if t.deadline and (t.deadline[:10] < iso):
             continue  # 已过期的任务不自动排（用户另行处理）
         minutes = _clamp_duration(t.estimated_minutes, task_minutes)
