@@ -44,7 +44,69 @@ def init_db() -> None:
     """建表（幂等）：基于 models 元数据创建所有缺失的表，并跑轻量迁移。"""
     Base.metadata.create_all(bind=engine)
     _rebuild_data_sources_check()
+    _rebuild_courses_tier_check()
+    _update_course_tiers()
     _migrate_legacy_columns()
+
+
+#: 指定课程档位调整（Issue #74）：(课程名, 目标档位)。幂等：重复执行无副作用。
+_COURSE_TIER_UPDATES: tuple[tuple[str, str], ...] = (
+    ("数据库系统实验", "A"),
+    ("航空航天材料工程", "S"),
+)
+
+
+def _update_course_tiers() -> None:
+    """按 :data:`_COURSE_TIER_UPDATES` 调整指定课程档位（幂等数据迁移）。"""
+    with engine.begin() as conn:
+        for name, tier in _COURSE_TIER_UPDATES:
+            conn.execute(
+                text("UPDATE courses SET tier = :tier WHERE name = :name"),
+                {"name": name, "tier": tier},
+            )
+
+
+def _rebuild_courses_tier_check() -> None:
+    """courses 的 tier CHECK 约束变更时重建表并迁移数据（幂等，SQLite 专用）。
+
+    Issue #74 废除 C 档：旧库约束含 'C' 时按「建新表 → 迁数据（C→B）→ 换名」
+    重建；同时删除指定课程（已退课，用户点名删除，如钙钛矿）。
+    幂等：新库约束已是 S/A/B，直接返回。
+    """
+    if not settings.database_url.startswith("sqlite"):
+        return
+    #: 随约束重建一并删除的课程名（用户已退课，如 Issue #74 的钙钛矿）
+    dropped_courses = ("钙钛矿材料及其柔性光电子器件",)
+
+    with engine.begin() as conn:
+        ddl_row = conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='courses'")
+        ).scalar()
+        if ddl_row is None:
+            return  # 表还不存在（create_all 刚建，约束已是最新）
+        if "'C'" not in (ddl_row or ""):
+            return  # 约束已是最新（S/A/B）
+        conn.execute(text("ALTER TABLE courses RENAME TO courses_old"))
+        conn.execute(text(
+            "CREATE TABLE courses ("
+            "id INTEGER PRIMARY KEY, "
+            "name VARCHAR NOT NULL, code VARCHAR, "
+            "tier VARCHAR NOT NULL DEFAULT 'A' CHECK (tier IN ('S','A','B')), "
+            "color VARCHAR, teacher VARCHAR, notes TEXT, "
+            "created_at TEXT NOT NULL)"
+        ))
+        # C → B（Issue #74：废除 C 档，原 C 档课程并入 B 档）
+        conn.execute(text(
+            "INSERT INTO courses (id, name, code, tier, color, teacher, notes, created_at) "
+            "SELECT id, name, code, "
+            "CASE WHEN tier = 'C' THEN 'B' ELSE tier END, "
+            "color, teacher, notes, created_at FROM courses_old"
+        ))
+        conn.execute(text("DROP TABLE courses_old"))
+        for name in dropped_courses:
+            conn.execute(
+                text("DELETE FROM courses WHERE name = :name"), {"name": name}
+            )
 
 
 def _rebuild_data_sources_check() -> None:

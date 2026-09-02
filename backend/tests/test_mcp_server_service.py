@@ -103,18 +103,24 @@ def test_generate_plan_basic(db_session):
         seed_basic(db)
         result = generate_plan(db, PLAN_DATE)
 
-        assert result.placed_count == 5  # 2 课程 + 任务 + 复习 + 杂项
+        assert result.placed_count == 6  # 2 课程 + S档课后复习 + 复习 + 任务 + 杂项
         assert result.dropped == []
         assert result.skipped == []
 
         items = plan_items(db)
-        assert len(items) == 5
+        assert len(items) == 6
         assert all(item.status == "draft" for item in items)
         types = sorted(item.item_type for item in items)
-        assert types == ["course", "course", "misc", "review", "task"]
-        # 课程块保持原时间；B 档释放块也出现在计划中
-        starts = {item.start_time for item in items if item.item_type == "course"}
-        assert starts == {"08:00", "14:00"}
+        assert types == ["course", "course", "misc", "review", "review", "task"]
+        # 课程块保持原时间；B 档课程照常出现且带标注（Issue #74）
+        course_titles = {item.title for item in items if item.item_type == "course"}
+        assert course_titles == {
+            "高等数学",
+            "大学英语（可做别的事，效率减半）",
+        }
+        # S 档课后复习紧排课后（08:00-09:40 课程 → 09:40 开始）
+        s_review = next(i for i in items if i.title == "复习 · 高等数学（课后）")
+        assert (s_review.start_time, s_review.end_time) == ("09:40", "10:40")
 
 
 def test_generate_plan_skips_when_day_confirmed(db_session):
@@ -129,7 +135,7 @@ def test_generate_plan_skips_when_day_confirmed(db_session):
         assert result.placed_count == 0
         assert any("已确认" in s for s in result.skipped)
         items = plan_items(db)
-        assert len(items) == 5
+        assert len(items) == 6
         assert all(item.status == "confirmed" for item in items)
 
         # 新增任务后仍不重排（改动请走 adjust_plan_item）
@@ -158,9 +164,9 @@ def test_generate_plan_skips_collision_with_done_item(db_session):
         db.commit()
 
         result = generate_plan(db, PLAN_DATE)
-        # 与 09:40 冲突的复习点被跳过并报告，其余正常放置
+        # 与 09:40 冲突的项被跳过并报告，其余正常放置（S 档课后复习首当其冲）
         assert any("复习" in s and "冲突" in s for s in result.skipped)
-        assert result.placed_count == 4
+        assert result.placed_count == 5
         assert all(
             i.start_time != "09:40" for i in plan_items(db) if i.status == "draft"
         )
@@ -173,7 +179,7 @@ def test_generate_plan_skips_misc_without_duration(db_session):
         db.commit()
         result = generate_plan(db, PLAN_DATE)
         assert any("没写时长的事" in s for s in result.skipped)
-        assert result.placed_count == 5
+        assert result.placed_count == 6
 
 
 def test_generate_plan_replaces_draft_with_same_start_time(db_session):
@@ -187,7 +193,7 @@ def test_generate_plan_replaces_draft_with_same_start_time(db_session):
         db.commit()
 
         result = generate_plan(db, PLAN_DATE)
-        assert result.placed_count == 5  # 课程 2 + 任务 + 复习 + 杂项，全部重新放好
+        assert result.placed_count == 6  # 课程 2 + 课后复习 + 复习 + 任务 + 杂项，全部重新放好
         assert result.skipped == []
         items = plan_items(db, PLAN_DATE)
         starts = [i.start_time for i in items]
@@ -202,7 +208,7 @@ def test_generate_plan_ignores_overdue_tasks(db_session):
         )
         db.commit()
         result = generate_plan(db, PLAN_DATE)
-        assert result.placed_count == 5
+        assert result.placed_count == 6
         assert not any(i.title == "早该交的作业" for i in plan_items(db))
 
 
@@ -219,6 +225,7 @@ def test_preview_plan_text(db_session):
         assert "⏳ 待确认" in text
         assert "📚 课程（2）" in text
         assert "高等数学" in text and "教西A1-101" in text  # 教室从 session 冗余展示
+        assert "大学英语（可做别的事，效率减半）" in text  # B 档标注（Issue #74）
         assert "高数作业" in text
         assert "泰勒展开" in text
         assert "取快递" in text
@@ -281,7 +288,7 @@ def test_confirm_plan_writes_version_and_syncs_calendar(db_session):
         writer = FakeCalendarWriter()
 
         result = confirm_plan(db, PLAN_DATE, calendar_writer=writer)
-        assert result.confirmed_count == 5
+        assert result.confirmed_count == 6
         assert result.version == 1
         assert result.notion_sync == {"created": 1, "updated": 0, "unchanged": 0}
         assert writer.calls == [PLAN_DATE]
@@ -292,7 +299,7 @@ def test_confirm_plan_writes_version_and_syncs_calendar(db_session):
         import json
 
         payload = json.loads(version.payload)
-        assert len(payload) == 5
+        assert len(payload) == 6
 
         # 再次确认：无 draft 可确认，不产生新版本
         result2 = confirm_plan(db, PLAN_DATE, calendar_writer=FakeCalendarWriter())
@@ -311,7 +318,7 @@ def test_confirm_plan_reports_notion_error_without_blocking(db_session):
                 raise RuntimeError("网络超时")
 
         result = confirm_plan(db, PLAN_DATE, calendar_writer=BrokenWriter())
-        assert result.confirmed_count == 5
+        assert result.confirmed_count == 6
         assert result.notion_sync == {"error": "网络超时"}
         assert all(i.status == "confirmed" for i in plan_items(db))
 
@@ -411,7 +418,10 @@ def test_mark_done_review_links_and_calibrates(db_session):
     with db_session() as db:
         seed_basic(db)
         generate_plan(db, PLAN_DATE)
-        review_item = next(i for i in plan_items(db) if i.item_type == "review")
+        # 知识点复习项（ref_id 非空）；S 档课后复习 ref_id=None，不参与联动
+        review_item = next(
+            i for i in plan_items(db) if i.item_type == "review" and i.ref_id is not None
+        )
 
         result = mark_done(db, review_item.id, actual_minutes=45)
         assert result["status"] == "done"

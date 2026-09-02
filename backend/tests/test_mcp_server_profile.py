@@ -235,7 +235,9 @@ def test_planner_unchanged_without_profile(db_session):
         assert db.query(UserProfile).count() == 0
         assert db.query(ProfileEvent).count() == 0
         task_item = item_by_title(db, "高数作业")
-        assert task_item.start_time == "10:10"  # 复习 09:40-10:10 → 任务 10:10-11:10
+        # S 档课后复习 09:40-10:40（Issue #74）+ 知识点复习 10:40-11:10 把上午空档
+        # 占到只剩 50 分钟；任务 60 分钟放不下 → 落到 12:00 分桶边界后的下午
+        assert task_item.start_time == "12:00"
 
 
 def test_generate_plan_respects_no_brain_after(db_session):

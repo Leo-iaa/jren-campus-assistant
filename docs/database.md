@@ -16,7 +16,7 @@
 ```text
 settings ──────────── 全局键值配置（复习上限、学习时段、LLM 等）
 
-courses 1───N course_sessions      课程 + 每周时间块（含 B/C 档释放标记）
+courses 1───N course_sessions      课程 + 每周时间块（release_slot 预留释放标记）
 courses 1───N knowledge_points     知识点（难度 1-5，关联笔记来源）
 knowledge_points 1───N review_schedules  复习计划（第 N 次复习、到期日、状态）
 courses 1───N tasks                作业任务（Notion 导入 / 手动创建）
@@ -71,7 +71,7 @@ CREATE TABLE course_sessions (
   start_time    TEXT NOT NULL,                -- '08:00'
   end_time      TEXT NOT NULL,
   location      TEXT,
-  release_slot  INTEGER NOT NULL DEFAULT 0,   -- B/C 档：该时段是否释放给其他任务
+  release_slot  INTEGER NOT NULL DEFAULT 0,   -- 该时段是否释放给其他任务（0/1，预留字段）
   UNIQUE (course_id, day_of_week, start_time)
 );
 ```

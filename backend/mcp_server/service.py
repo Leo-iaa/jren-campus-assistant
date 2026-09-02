@@ -61,6 +61,9 @@ _AFTERNOON_END = time(18, 0)
 DEFAULT_TASK_MINUTES = 60
 DEFAULT_REVIEW_MINUTES = 30
 
+#: S 档课后复习时长（分钟，Issue #74：每门 S 档课程上完自动安排 1 小时复习）
+S_REVIEW_MINUTES = 60
+
 #: 单条目时长上限（分钟）：超过视为异常，clamp 以免 time() 溢出（hour>23）崩溃
 MAX_DURATION_MINUTES = 720
 
@@ -157,7 +160,7 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
     if task_minutes <= 0 or review_minutes <= 0:
         raise ValueError("设置 task_duration_minutes / review_duration_minutes 必须为正整数")
 
-    # 1. 固定课程块（当日星期几的课程时间块；B/C 档 release_slot=1 释放给其他任务）
+    # 1. 固定课程块（当日星期几的课程时间块；release_slot 为预留字段，默认不释放）
     #    周次区间（starts_on/ends_on）为空表示整学期有效；否则仅保留目标日期落在
     #    生效区间内的课程（支持前后半学期同星期同时段的不同课程错峰，如机械原理Ⅱ/
     #    航空航天材料工程）
@@ -182,10 +185,32 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
             end=parse_hhmm(s.end_time),
             item_type="course",
             ref_id=s.id,
-            title=s.course.name,
-            release_slot=bool(s.release_slot),
+            title=(
+                # B 档标注（Issue #74）：照常占住日程，但提示该时段可做别的事
+                f"{s.course.name}（可做别的事，效率减半）"
+                if s.course.tier == "B"
+                else s.course.name
+            ),
+            # release_slot 不再读取（预留字段）：B 档改为标题标注，课程一律硬块
+            release_slot=False,
         )
         for s in sessions
+    ]
+
+    # 1.2 S 档课后复习（Issue #74）：每门 S 档课程上完后自动安排 1 小时复习，
+    #     not_before 紧排课后（规划器保证不早于该课程结束时间）
+    s_review_drafts: list[PlanItemDraft] = [
+        PlanItemDraft(
+            date=plan_date,
+            start=time(0, 0),  # 占位：规划器只取 end-start 作为时长
+            end=_minutes_to_time(S_REVIEW_MINUTES),
+            item_type="review",
+            ref_id=None,
+            title=f"复习 · {s.course.name}（课后）",
+            not_before=parse_hhmm(s.end_time),
+        )
+        for s in sessions
+        if s.course.tier == "S"
     ]
 
     # 1.5 用户画像偏好（Issue #63）：偏好时段 / 晚间脑力截止 / 固定安排屏障。
@@ -283,7 +308,7 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         plan_date,
         course_drafts,
         task_drafts,
-        review_drafts,
+        review_drafts + s_review_drafts,
         misc_drafts,
         study_hours,
         brain_curfew=prefs.no_brain_after,

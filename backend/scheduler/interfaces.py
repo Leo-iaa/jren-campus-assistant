@@ -36,8 +36,9 @@ class PlanItemDraft:
     item_type: str  # course / task / review / misc
     ref_id: int | None
     title: str
-    release_slot: bool = False  # 课程块是否释放（B/C 档：该时段可安排其他任务）
+    release_slot: bool = False  # 课程块是否释放（预留字段，默认不释放）
     preferred_bucket: str | None = None  # 画像偏好时段（morning/afternoon/evening，可选）
+    not_before: time | None = None  # 最早开始时间（S 档课后复习：紧排课后）
 
 
 # ---------- 接口签名（占位） ----------
@@ -52,7 +53,7 @@ class ReviewScheduler(Protocol):
 
     def build_review_schedule(
         self,
-        course_tier: str,  # 'S' | 'A' | 'B' | 'C'
+        course_tier: str,  # 'S' | 'A' | 'B'
         difficulty: int,  # 1-5
         first_date: date,  # 首次复习日期（通常为上课当天）
         daily_cap: int = 8,  # 每日复习上限（超出顺延次日）

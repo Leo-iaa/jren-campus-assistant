@@ -1,8 +1,9 @@
 """时间表规划器单元测试（纯逻辑，无网络/数据库依赖）。
 
 对齐 docs/vision.md 与 docs/database.md 设计决策：
-- 固定课程块为硬屏障（不可重叠）；B/C 档 `release_slot=True` 的时段可安排其他任务
+- 固定课程块为硬屏障（不可重叠）；release_slot 为预留字段（默认不释放）
 - 复习/作业优先落入学习时段偏好窗口，溢出到其余空闲时段
+- not_before：最早开始时间（S 档课后复习紧排课后，Issue #74）
 - 输出保证 UNIQUE(date, start_time)：与课程起始分钟错开、彼此不重复
 - 放不下的任务进入 dropped 报告（硬保证：不产生冲突）
 """
@@ -94,6 +95,49 @@ def test_invalid_duration_raises():
 def test_invalid_item_type_raises():
     with pytest.raises(ValueError):
         build_plan(D, [], [item(time(0, 0), time(0, 30), item_type="homework")], [], [])
+
+
+# ---------- not_before（S 档课后复习，Issue #74） ----------
+
+
+def _review_with_not_before(nb: time) -> PlanItemDraft:
+    return PlanItemDraft(
+        date=D,
+        start=time(0, 0),
+        end=time(1, 0),  # 时长 60 分钟
+        item_type="review",
+        ref_id=None,
+        title="复习 · 高数（课后）",
+        not_before=nb,
+    )
+
+
+def test_not_before_places_right_after_course():
+    # 课程 08:00-09:40，not_before=09:40 → 复习紧排 09:40-10:40
+    cs = [course(time(8, 0), time(9, 40))]
+    out = build_plan(D, cs, [], [_review_with_not_before(time(9, 40))], [])
+    review = [p for p in out if p.item_type == "review"][0]
+    assert (review.start, review.end) == (time(9, 40), time(10, 40))
+
+
+def test_not_before_skips_earlier_gap():
+    # 08:00 前有 1.5h 空档，not_before=10:00 → 不会被排进更早的空档；
+    # 10:00 是课程起始分钟（UNIQUE 错开）→ 排在课程结束后的 11:00
+    cs = [course(time(10, 0), time(11, 0))]
+    out = build_plan(D, cs, [], [_review_with_not_before(time(10, 0))], [])
+    review = [p for p in out if p.item_type == "review"][0]
+    assert review.start == time(11, 0)
+
+
+def test_not_before_without_fit_drops_item():
+    # not_before 之后无足够空档（课程到 21:30，剩余 30 分钟 < 60 分钟）→ dropped
+    cs = [
+        course(time(8, 0), time(9, 0)),
+        course(time(9, 30), time(21, 30), title="占满白天"),
+    ]
+    result = build_plan_full(D, cs, [], [_review_with_not_before(time(9, 0))], [])
+    assert len(result.dropped) == 1
+    assert result.dropped[0].title == "复习 · 高数（课后）"
 
 
 def test_invalid_study_hours_raises():
