@@ -72,6 +72,11 @@ def _rebuild_courses_tier_check() -> None:
     Issue #74 废除 C 档：旧库约束含 'C' 时按「建新表 → 迁数据（C→B）→ 换名」
     重建；同时删除指定课程（已退课，用户点名删除，如钙钛矿）。
     幂等：新库约束已是 S/A/B，直接返回。
+
+    ⚠️ SQLite 的 ALTER TABLE ... RENAME TO 会把子表外键引用一起改指向旧表名，
+    DROP TABLE 旧表后子表 FK 失效（后续插入报 no such table: main.courses_old）。
+    因此重建前先记录引用 courses 的子表，重建后用 PRAGMA writable_schema
+    把子表 DDL 里的 'courses_old' 引用改回 'courses'（须重连生效）。
     """
     if not settings.database_url.startswith("sqlite"):
         return
@@ -86,6 +91,15 @@ def _rebuild_courses_tier_check() -> None:
             return  # 表还不存在（create_all 刚建，约束已是最新）
         if "'C'" not in (ddl_row or ""):
             return  # 约束已是最新（S/A/B）
+        # 找出引用 courses 的子表（RENAME 会把它们的 FK 一并指向 courses_old）
+        children = [
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' "
+                     "AND sql LIKE '%REFERENCES%courses%' AND name != 'courses'")
+            )
+        ]
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
         conn.execute(text("ALTER TABLE courses RENAME TO courses_old"))
         conn.execute(text(
             "CREATE TABLE courses ("
@@ -106,6 +120,15 @@ def _rebuild_courses_tier_check() -> None:
         for name in dropped_courses:
             conn.execute(
                 text("DELETE FROM courses WHERE name = :name"), {"name": name}
+            )
+        # 修复子表 DDL：RENAME 把 FK 引用改成了 courses_old，改回 courses
+        # （writable_schema 直改 sqlite_master，重连后生效）
+        for child in children:
+            conn.execute(
+                text("UPDATE sqlite_master SET sql = REPLACE(sql, "
+                     "'REFERENCES \"courses_old\"', 'REFERENCES \"courses\"') "
+                     "WHERE type='table' AND name = :name"),
+                {"name": child},
             )
 
 
