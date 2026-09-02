@@ -103,20 +103,21 @@ def test_generate_plan_basic(db_session):
         seed_basic(db)
         result = generate_plan(db, PLAN_DATE)
 
-        assert result.placed_count == 6  # 2 课程 + S档课后复习 + 复习 + 任务 + 杂项
+        assert result.placed_count == 5  # 2 课程 + S档课后复习 + 复习 + 杂项
+        # （「高数作业」被 B 档英语课标注选走：就在课上写，不再单独排）
         assert result.dropped == []
         assert result.skipped == []
 
         items = plan_items(db)
-        assert len(items) == 6
+        assert len(items) == 5
         assert all(item.status == "draft" for item in items)
         types = sorted(item.item_type for item in items)
-        assert types == ["course", "course", "misc", "review", "review", "task"]
-        # 课程块保持原时间；B 档课程照常出现且带标注（Issue #74）
+        assert types == ["course", "course", "misc", "review", "review"]
+        # 课程块保持原时间；B 档课程照常出现，括号里写明课上该干什么（Issue #76）
         course_titles = {item.title for item in items if item.item_type == "course"}
         assert course_titles == {
             "高等数学",
-            "大学英语（可做别的事，效率减半）",
+            "大学英语（可写高数作业）",
         }
         # S 档课后复习紧排课后（08:00-09:40 课程 → 09:40 开始）
         s_review = next(i for i in items if i.title == "复习 · 高等数学（课后）")
@@ -135,7 +136,7 @@ def test_generate_plan_skips_when_day_confirmed(db_session):
         assert result.placed_count == 0
         assert any("已确认" in s for s in result.skipped)
         items = plan_items(db)
-        assert len(items) == 6
+        assert len(items) == 5
         assert all(item.status == "confirmed" for item in items)
 
         # 新增任务后仍不重排（改动请走 adjust_plan_item）
@@ -166,7 +167,7 @@ def test_generate_plan_skips_collision_with_done_item(db_session):
         result = generate_plan(db, PLAN_DATE)
         # 与 09:40 冲突的项被跳过并报告，其余正常放置（S 档课后复习首当其冲）
         assert any("复习" in s and "冲突" in s for s in result.skipped)
-        assert result.placed_count == 5
+        assert result.placed_count == 4
         assert all(
             i.start_time != "09:40" for i in plan_items(db) if i.status == "draft"
         )
@@ -179,7 +180,7 @@ def test_generate_plan_skips_misc_without_duration(db_session):
         db.commit()
         result = generate_plan(db, PLAN_DATE)
         assert any("没写时长的事" in s for s in result.skipped)
-        assert result.placed_count == 6
+        assert result.placed_count == 5
 
 
 def test_generate_plan_replaces_draft_with_same_start_time(db_session):
@@ -193,7 +194,7 @@ def test_generate_plan_replaces_draft_with_same_start_time(db_session):
         db.commit()
 
         result = generate_plan(db, PLAN_DATE)
-        assert result.placed_count == 6  # 课程 2 + 课后复习 + 复习 + 任务 + 杂项，全部重新放好
+        assert result.placed_count == 5  # 课程 2 + 课后复习 + 复习 + 杂项（任务被 B 档标注吞掉）
         assert result.skipped == []
         items = plan_items(db, PLAN_DATE)
         starts = [i.start_time for i in items]
@@ -208,8 +209,11 @@ def test_generate_plan_ignores_overdue_tasks(db_session):
         )
         db.commit()
         result = generate_plan(db, PLAN_DATE)
-        assert result.placed_count == 6
+        # 逾期任务被忽略（不排也不被 B 档标注选中）；B 档标注选走高数作业 → 5 项
+        assert result.placed_count == 5
         assert not any(i.title == "早该交的作业" for i in plan_items(db))
+        course_titles = {i.title for i in plan_items(db) if i.item_type == "course"}
+        assert "大学英语（可写高数作业）" in course_titles  # 逾期任务没被选去标注
 
 
 # ---------- 预览 ----------
@@ -225,8 +229,7 @@ def test_preview_plan_text(db_session):
         assert "⏳ 待确认" in text
         assert "📚 课程（2）" in text
         assert "高等数学" in text and "教西A1-101" in text  # 教室从 session 冗余展示
-        assert "大学英语（可做别的事，效率减半）" in text  # B 档标注（Issue #74）
-        assert "高数作业" in text
+        assert "大学英语（可写高数作业）" in text  # B 档标注：括号里写明课上干什么（Issue #76）
         assert "泰勒展开" in text
         assert "取快递" in text
 
@@ -288,7 +291,7 @@ def test_confirm_plan_writes_version_and_syncs_calendar(db_session):
         writer = FakeCalendarWriter()
 
         result = confirm_plan(db, PLAN_DATE, calendar_writer=writer)
-        assert result.confirmed_count == 6
+        assert result.confirmed_count == 5
         assert result.version == 1
         assert result.notion_sync == {"created": 1, "updated": 0, "unchanged": 0}
         assert writer.calls == [PLAN_DATE]
@@ -299,7 +302,7 @@ def test_confirm_plan_writes_version_and_syncs_calendar(db_session):
         import json
 
         payload = json.loads(version.payload)
-        assert len(payload) == 6
+        assert len(payload) == 5
 
         # 再次确认：无 draft 可确认，不产生新版本
         result2 = confirm_plan(db, PLAN_DATE, calendar_writer=FakeCalendarWriter())
@@ -318,7 +321,7 @@ def test_confirm_plan_reports_notion_error_without_blocking(db_session):
                 raise RuntimeError("网络超时")
 
         result = confirm_plan(db, PLAN_DATE, calendar_writer=BrokenWriter())
-        assert result.confirmed_count == 6
+        assert result.confirmed_count == 5
         assert result.notion_sync == {"error": "网络超时"}
         assert all(i.status == "confirmed" for i in plan_items(db))
 
@@ -326,9 +329,16 @@ def test_confirm_plan_reports_notion_error_without_blocking(db_session):
 # ---------- 调整 ----------
 
 
+def _add_spare_task(db) -> None:
+    """加一个不被 B 档标注选走的任务（seed 的高数作业会被英语课吞去做标注）。"""
+    db.add(Task(title="线代习题", course_id=None, estimated_minutes=45, status="todo"))
+    db.commit()
+
+
 def test_adjust_plan_item(db_session):
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
 
@@ -342,6 +352,7 @@ def test_adjust_plan_item(db_session):
 def test_adjust_plan_item_conflict_raises(db_session):
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
         # 与 08:00-09:40 课程块重叠
@@ -353,6 +364,7 @@ def test_adjust_plan_item_syncs_calendar_when_confirmed(db_session):
     """该日计划已确认（已写日历）→ 调整后增量同步 Notion 日历。"""
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         confirm_plan(db, PLAN_DATE, calendar_writer=None)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
@@ -372,6 +384,7 @@ def test_adjust_plan_item_no_calendar_sync_when_draft(db_session):
     """草案阶段不写日历（确认时才统一写入）：writer 不触发。"""
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
 
@@ -387,6 +400,7 @@ def test_adjust_plan_item_calendar_error_does_not_block(db_session):
     """日历同步失败不阻断调整（notion_sync 记录错误）。"""
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         confirm_plan(db, PLAN_DATE, calendar_writer=None)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
@@ -405,6 +419,7 @@ def test_adjust_plan_item_calendar_error_does_not_block(db_session):
 def test_adjust_plan_item_bad_time_raises(db_session):
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
         with pytest.raises(ValueError, match="时间格式"):
@@ -449,6 +464,7 @@ def test_mark_done_review_links_and_calibrates(db_session):
 def test_mark_done_task_records_calibration(db_session):
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
 
@@ -457,14 +473,15 @@ def test_mark_done_task_records_calibration(db_session):
 
         stat = db.query(CalibrationStat).filter(CalibrationStat.item_type == "task").first()
         assert stat is not None
-        assert stat.course_id is not None  # 高数作业关联课程
+        assert stat.course_id is None  # 线代习题无课程关联（高数作业被 B 档标注吞掉）
         assert stat.difficulty is None
-        assert stat.factor == pytest.approx(90 / 60)
+        assert stat.factor == pytest.approx(90 / 45)
 
 
 def test_mark_done_without_actual_minutes_skips_calibration(db_session):
     with db_session() as db:
         seed_basic(db)
+        _add_spare_task(db)
         generate_plan(db, PLAN_DATE)
         task_item = next(i for i in plan_items(db) if i.item_type == "task")
         result = mark_done(db, task_item.id)
