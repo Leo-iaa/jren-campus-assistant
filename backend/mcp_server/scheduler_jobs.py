@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -81,9 +82,11 @@ def generate_tomorrow_plan_job() -> None:
             if notion_error and sync is None:
                 sync = {"error": notion_error}
             logger.info(
-                "定时确认次日计划完成：date=%s confirmed=%d version=%d notion_sync=%s",
+                "定时确认次日计划完成：date=%s confirmed=%d version=%s notion_sync=%s",
                 plan_date.isoformat(),
                 confirmed.confirmed_count,
+                # confirm_plan 无可确认项时 version 为 None，%d 会触发 Logging error
+                # （空计划必现，#78）；%s 原样输出 None
                 confirmed.version,
                 json.dumps(sync, ensure_ascii=False) if sync else "null",
             )
@@ -128,3 +131,91 @@ def stop_scheduler() -> None:
         _scheduler.shutdown(wait=False)
         _scheduler = None
         logger.info("MCP 定时任务已停止")
+
+
+# ---------- 启动补偿 ----------
+
+#: 当天晚于此时刻不再补生成今日计划（临近午夜补一份当日计划没有意义）
+CATCHUP_TODAY_CUTOFF_HOUR = 20
+
+
+def run_startup_catchup(now: datetime | None = None) -> None:
+    """后端启动补偿：电脑关机/休眠错过定时点时，开机后补齐计划缺口。
+
+    与定时 job 共用同一套 service 层，幂等保证：
+    - generate_plan 对已有 confirmed 项的日期自动跳过重排（has_confirmed 保护）
+    - confirm_plan 写日历按 (日期, 时段) 幂等去重（created/updated/unchanged）
+
+    补偿规则：
+    - 今天无任何计划项且早于 ``CATCHUP_TODAY_CUTOFF_HOUR`` 点
+      → 生成并确认今日计划（auto_confirm 路径，与定时 job 完全同款）
+    - 已过生成时间（``JREN_MCP_PLAN_GENERATE_TIME``，默认 21:00）
+      且明天尚无已确认计划 → 补跑一次 ``generate_tomorrow_plan_job``
+
+    异常仅记日志，不阻断后端启动；本函数只执行一次，不注册任何调度任务。
+    ``now`` 参数仅供测试注入时钟。
+    """
+    from backend.database import SessionLocal
+    from backend.models import PlanItem
+    from backend.mcp_server.service import (
+        confirm_plan,
+        generate_plan,
+        tomorrow as service_tomorrow,
+    )
+
+    now = now or datetime.now(_SHANGHAI)
+    today = now.date()
+    try:
+        with SessionLocal() as db:
+            # a) 今日计划缺口：空计划 + 未过截断时刻 → 生成并确认今天
+            today_iso = today.isoformat()
+            has_today = db.query(PlanItem.id).filter(PlanItem.date == today_iso).first()
+            if has_today is None and now.hour < CATCHUP_TODAY_CUTOFF_HOUR:
+                result = generate_plan(db, today)
+                writer, notion_error = _build_writer_safe(db)
+                confirmed = confirm_plan(db, today, calendar_writer=writer)
+                sync = confirmed.notion_sync
+                if notion_error and sync is None:
+                    sync = {"error": notion_error}
+                logger.info(
+                    "启动补偿：已补生成并确认今日计划 date=%s placed=%d confirmed=%d version=%s",
+                    today_iso,
+                    result.placed_count,
+                    confirmed.confirmed_count,
+                    confirmed.version,
+                )
+                if result.dropped or result.skipped:
+                    logger.warning(
+                        "启动补偿（今日）有未放置/跳过项：dropped=%s skipped=%s",
+                        result.dropped,
+                        result.skipped,
+                    )
+            elif has_today is None:
+                logger.info(
+                    "启动补偿：今天无计划但已过 %02d:00，跳过今日补生成",
+                    CATCHUP_TODAY_CUTOFF_HOUR,
+                )
+
+            # b) 次日计划缺口：已过生成时刻 + 明天无已确认项 → 补跑定时 job
+            gen_hour, gen_minute = _parse_generate_time(settings.mcp_plan_generate_time)
+            if (now.hour, now.minute) >= (gen_hour, gen_minute):
+                tomorrow_date = service_tomorrow()
+                has_tomorrow_confirmed = (
+                    db.query(PlanItem.id)
+                    .filter(
+                        PlanItem.date == tomorrow_date.isoformat(),
+                        PlanItem.status == "confirmed",
+                    )
+                    .first()
+                )
+                if has_tomorrow_confirmed is None:
+                    logger.info(
+                        "启动补偿：已过 %02d:%02d 且次日计划未确认，补跑次日生成任务",
+                        gen_hour,
+                        gen_minute,
+                    )
+                    generate_tomorrow_plan_job()
+                else:
+                    logger.info("启动补偿：次日计划已确认（%s），无需补跑", tomorrow_date.isoformat())
+    except Exception:  # noqa: BLE001 —— 启动补偿失败不阻断后端启动
+        logger.exception("启动补偿执行失败（today=%s）", today.isoformat())
