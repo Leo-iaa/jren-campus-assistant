@@ -13,6 +13,7 @@ APScheduler 21:00 定时任务同样在 lifespan 中按配置启停。
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+import asyncio
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,11 @@ from backend.api import api_router
 from backend.api.health import router as health_router
 from backend.config import settings
 from backend.database import init_db
-from backend.mcp_server.scheduler_jobs import start_scheduler_if_enabled, stop_scheduler
+from backend.mcp_server.scheduler_jobs import (
+    run_startup_catchup,
+    start_scheduler_if_enabled,
+    stop_scheduler,
+)
 from backend.mcp_server.server import build_mcp_server
 
 
@@ -53,6 +58,9 @@ def create_app(db_factory: Callable[[], Session] | None = None) -> FastAPI:
         # MCP 会话管理器必须在请求前启动（内嵌 ASGI 应用无自己的 lifespan）
         async with mcp_server.session_manager.run():
             start_scheduler_if_enabled()
+            # 启动补偿：弥补关机/休眠错过定时点的计划缺口（线程内跑，
+            # 内部含 Notion 网络写入，不能阻塞事件循环）
+            await asyncio.to_thread(run_startup_catchup)
             yield
             stop_scheduler()
 
