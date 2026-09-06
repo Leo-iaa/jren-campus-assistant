@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # WorkBuddy 应用内调度器在「开机后很快到触发点」场景不可靠（2026-09-06 实测
     # 09:30 触发器未挂上），故晨间推送由后端自己承担，WorkBuddy 侧对应自动化已暂停
     mcp_morning_push_time: str = "09:35"
+    # 晚间推送时间（HH:MM）：生成次日计划后把 preview 推到微信的后端通道。
+    # 同晨间推送：WorkBuddy 连接器预检在短暂后端抖动后会长时间退避（2026-09-06
+    # 20:33 重注册杀进程 → 21:00 自动化预检 failed=2 中止），推送一律走后端直连
+    mcp_evening_push_time: str = "21:05"
     # clawbot 推送 CLI（wechat-clawbot-push 包的 console script，--test 模式即推送）；
     # 置空字符串可关闭推送（仍会确保今日计划已生成）
     mcp_wechat_push_cmd: str = (

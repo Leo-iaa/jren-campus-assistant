@@ -124,6 +124,11 @@ def start_scheduler_if_enabled() -> BackgroundScheduler | None:
         default=(9, 35),
         label="mcp_morning_push_time",
     )
+    evening_hour, evening_minute = _parse_hhmm(
+        settings.mcp_evening_push_time,
+        default=(21, 5),
+        label="mcp_evening_push_time",
+    )
     _scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
     _scheduler.add_job(
         generate_tomorrow_plan_job,
@@ -141,13 +146,25 @@ def start_scheduler_if_enabled() -> BackgroundScheduler | None:
         # 开机晚于 09:35 时（重启后端即触发补跑）也能补上当日推送
         misfire_grace_time=3600,
     )
+    _scheduler.add_job(
+        evening_push_job,
+        CronTrigger(
+            hour=evening_hour, minute=evening_minute, timezone="Asia/Shanghai"
+        ),
+        id=EVENING_PUSH_JOB_ID,
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
     _scheduler.start()
     logger.info(
-        "MCP 定时任务已启动：每天 %02d:%02d 生成次日计划、%02d:%02d 晨间推送（Asia/Shanghai）",
+        "MCP 定时任务已启动：每天 %02d:%02d 生成次日计划、%02d:%02d 晨间推送、"
+        "%02d:%02d 晚间推送（Asia/Shanghai）",
         hour,
         minute,
         push_hour,
         push_minute,
+        evening_hour,
+        evening_minute,
     )
     return _scheduler
 
@@ -245,6 +262,15 @@ def run_startup_catchup(now: datetime | None = None) -> None:
                     generate_tomorrow_plan_job()
                 else:
                     logger.info("启动补偿：次日计划已确认（%s），无需补跑", tomorrow_date.isoformat())
+        # 晚间推送补偿：已到晚间推送点且当天未推过 → 补推（evening_push_job 幂等，
+        # 已推过 / 未到时间都会安全返回；morning_push_job 09:35 调进来时不会触发）
+        evening_due = _parse_hhmm(
+            settings.mcp_evening_push_time,
+            default=(21, 5),
+            label="mcp_evening_push_time",
+        )
+        if (now.hour, now.minute) >= evening_due:
+            evening_push_job(now)
     except Exception:  # noqa: BLE001 —— 启动补偿失败不阻断后端启动
         logger.exception("启动补偿执行失败（today=%s）", today.isoformat())
 
@@ -259,6 +285,9 @@ def run_startup_catchup(now: datetime | None = None) -> None:
 
 #: settings 表里「当日已推送」标记的 key（value = 推送日期 ISO 字符串）
 MORNING_PUSH_MARK_KEY = "morning_push_done"
+#: 晚间推送（次日计划 preview）的 job id 与防重标记
+EVENING_PUSH_JOB_ID = "evening_plan_push"
+EVENING_PUSH_MARK_KEY = "evening_push_done"
 
 
 def _push_text_via_cli(text: str) -> tuple[bool, str]:
@@ -344,3 +373,62 @@ def morning_push_job(now: datetime | None = None) -> None:
         logger.info("晨间推送完成：date=%s detail=%s", today.isoformat(), detail)
     except Exception:  # noqa: BLE001 —— 定时任务不允许崩溃
         logger.exception("晨间推送任务失败（date=%s）", today.isoformat())
+
+
+def evening_push_job(now: datetime | None = None) -> None:
+    """每天晚间把次日计划 preview 推送到微信（幂等，异常仅记日志）。
+
+    21:00 生成任务之后几分钟运行。与晨间推送同构：
+    1) settings 表防重（evening_push_done = 推送日 ISO 字符串）
+    2) 调 generate_tomorrow_plan_job 确保次日计划已生成（has_confirmed 保护，
+       已确认的日期不会重排，幂等）
+    3) preview_plan_text(db, tomorrow) 取推送文本
+    4) clawbot CLI 推送，成功后才写当日标记
+    """
+    from backend.database import SessionLocal
+    from backend.models import Setting
+    from backend.mcp_server.service import (
+        preview_plan_text,
+        shanghai_today,
+        tomorrow,
+    )
+
+    now = now or datetime.now(_SHANGHAI)
+    today = shanghai_today()
+    try:
+        with SessionLocal() as db:
+            mark = (
+                db.query(Setting)
+                .filter(Setting.key == EVENING_PUSH_MARK_KEY)
+                .first()
+            )
+            if mark is not None and mark.value == today.isoformat():
+                logger.info("晚间推送：今天（%s）已推送过，跳过", today.isoformat())
+                return
+        # 确保次日计划已生成并确认（幂等；Tonight 21:00 job 通常已完成）
+        generate_tomorrow_plan_job()
+        plan_date = tomorrow()
+        with SessionLocal() as db:
+            text = preview_plan_text(db, plan_date)
+        ok, detail = _push_text_via_cli(text)
+        if not ok:
+            logger.warning(
+                "晚间推送失败（date=%s）：%s", plan_date.isoformat(), detail
+            )
+            return
+        with SessionLocal() as db:
+            mark = (
+                db.query(Setting)
+                .filter(Setting.key == EVENING_PUSH_MARK_KEY)
+                .first()
+            )
+            if mark is None:
+                mark = Setting(key=EVENING_PUSH_MARK_KEY, value="")
+                db.add(mark)
+            mark.value = today.isoformat()
+            db.commit()
+        logger.info(
+            "晚间推送完成：plan_date=%s detail=%s", plan_date.isoformat(), detail
+        )
+    except Exception:  # noqa: BLE001 —— 定时任务不允许崩溃
+        logger.exception("晚间推送任务失败（date=%s）", today.isoformat())
