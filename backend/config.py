@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     mcp_scheduler_enabled: bool = True
     # 计划生成时间（HH:MM，Asia/Shanghai）
     mcp_plan_generate_time: str = "21:00"
+    # 晨间推送时间（HH:MM）：把今日计划推到微信的后端兜底通道。
+    # WorkBuddy 应用内调度器在「开机后很快到触发点」场景不可靠（2026-09-06 实测
+    # 09:30 触发器未挂上），故晨间推送由后端自己承担，WorkBuddy 侧对应自动化已暂停
+    mcp_morning_push_time: str = "09:35"
+    # clawbot 推送 CLI（wechat-clawbot-push 包的 console script，--test 模式即推送）；
+    # 置空字符串可关闭推送（仍会确保今日计划已生成）
+    mcp_wechat_push_cmd: str = (
+        r"C:\Users\LEO\.workbuddy\binaries\python\envs\default\Scripts\wechat-clawbot-push.exe"
+    )
     # Notion 日程数据库 ID（或写入数据源 config.calendar_database_id）
     mcp_notion_calendar_db: str | None = None
     # Notion 任务数据库 ID（或写入数据源 config.task_database_id；add_task 写入用）

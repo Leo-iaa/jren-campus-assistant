@@ -31,21 +31,30 @@ _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 #: 任务 id（幂等注册，replace_existing 防重复）
 JOB_ID = "generate_tomorrow_plan"
+#: 晨间推送任务 id
+MORNING_PUSH_JOB_ID = "morning_plan_push"
 
 _scheduler: BackgroundScheduler | None = None
 
 
-def _parse_generate_time(value: str) -> tuple[int, int]:
-    """解析 'HH:MM' → (hour, minute)；非法回退默认 21:00。"""
-    hour_s, sep, minute_s = value.partition(":")
+def _parse_hhmm(value: str, *, default: tuple[int, int], label: str) -> tuple[int, int]:
+    """解析 'HH:MM' → (hour, minute)；非法回退默认并告警。"""
+    hour_s, _sep, minute_s = value.partition(":")
     try:
         hour, minute = int(hour_s), int(minute_s or "0")
     except ValueError:
-        hour, minute = 21, 0
+        hour, minute = default
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        logger.warning("mcp_plan_generate_time 非法（应为 HH:MM）：%r，使用默认 21:00", value)
-        return 21, 0
+        logger.warning(
+            "%s 非法（应为 HH:MM）：%r，使用默认 %02d:%02d", label, value, *default
+        )
+        return default
     return hour, minute
+
+
+def _parse_generate_time(value: str) -> tuple[int, int]:
+    """计划生成时间（默认 21:00）。"""
+    return _parse_hhmm(value, default=(21, 0), label="mcp_plan_generate_time")
 
 
 def _build_writer_safe(db):
@@ -110,6 +119,11 @@ def start_scheduler_if_enabled() -> BackgroundScheduler | None:
         return _scheduler
 
     hour, minute = _parse_generate_time(settings.mcp_plan_generate_time)
+    push_hour, push_minute = _parse_hhmm(
+        settings.mcp_morning_push_time,
+        default=(9, 35),
+        label="mcp_morning_push_time",
+    )
     _scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
     _scheduler.add_job(
         generate_tomorrow_plan_job,
@@ -119,8 +133,22 @@ def start_scheduler_if_enabled() -> BackgroundScheduler | None:
         # 电脑休眠错过触发点后 1 小时内补跑（兜底更稳）
         misfire_grace_time=3600,
     )
+    _scheduler.add_job(
+        morning_push_job,
+        CronTrigger(hour=push_hour, minute=push_minute, timezone="Asia/Shanghai"),
+        id=MORNING_PUSH_JOB_ID,
+        replace_existing=True,
+        # 开机晚于 09:35 时（重启后端即触发补跑）也能补上当日推送
+        misfire_grace_time=3600,
+    )
     _scheduler.start()
-    logger.info("MCP 定时任务已启动：每天 %02d:%02d 生成次日计划（Asia/Shanghai）", hour, minute)
+    logger.info(
+        "MCP 定时任务已启动：每天 %02d:%02d 生成次日计划、%02d:%02d 晨间推送（Asia/Shanghai）",
+        hour,
+        minute,
+        push_hour,
+        push_minute,
+    )
     return _scheduler
 
 
@@ -219,3 +247,100 @@ def run_startup_catchup(now: datetime | None = None) -> None:
                     logger.info("启动补偿：次日计划已确认（%s），无需补跑", tomorrow_date.isoformat())
     except Exception:  # noqa: BLE001 —— 启动补偿失败不阻断后端启动
         logger.exception("启动补偿执行失败（today=%s）", today.isoformat())
+
+
+# ---------- 晨间推送（后端兜底通道） ----------
+#
+# 背景（2026-09-06）：WorkBuddy 应用内调度器在「开机后很快到触发点」场景下
+# 定时器未挂上（09:30 触发器整点未响、无任何日志），21:00 这类应用已运行
+# 数小时的触发点则一直正常。晨间推送改由后端自己承担：只要后端进程在运行
+# （看门狗 + 开机自启保证），当天 09:35 必有推送；后端重启时 misfire 补跑
+# （1 小时宽限）进一步兜底。
+
+#: settings 表里「当日已推送」标记的 key（value = 推送日期 ISO 字符串）
+MORNING_PUSH_MARK_KEY = "morning_push_done"
+
+
+def _push_text_via_cli(text: str) -> tuple[bool, str]:
+    """调用 wechat-clawbot-push CLI 推送文本（--test 模式即发送）。
+
+    与 WorkBuddy 的 wechat-clawbot-push 连接器共用同一份 token 缓存
+    （~/.workbuddy/wechat-clawbot-push/push_cache.json）。
+    返回 (是否成功, 详情)。可被测试替换。
+    """
+    import subprocess
+
+    cmd = settings.mcp_wechat_push_cmd
+    if not cmd:
+        return False, "未配置 JREN_MCP_WECHAT_PUSH_CMD，推送关闭"
+    try:
+        proc = subprocess.run(
+            [cmd, "--test", text],
+            capture_output=True,
+            timeout=90,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"推送 CLI 调用失败：{exc}"
+    # 注意：CLI 发送失败时退出码也是 0（cmd_test 只 print 不设 exit code），
+    # 只能按输出内容判断：成功会打 "HTTP 200 | 发送成功" + "[OK] 已主动推送"
+    out = (proc.stdout or "")
+    if "发送成功" in out or "[OK]" in out:
+        return True, out.strip()
+    detail = out.strip() or (proc.stderr or "").strip() or f"returncode={proc.returncode}"
+    if "失效" in detail or "尚未获取 token" in detail or "TOKEN_EXPIRED" in detail:
+        detail += (
+            "（token 失效：在 WorkBuddy 会话调用 acquire_token 并用手机给 bot "
+            "发一条消息即可刷新；本任务不自动重试）"
+        )
+    return False, detail
+
+
+def morning_push_job(now: datetime | None = None) -> None:
+    """每天晨间把今日计划推送到微信（幂等，异常仅记日志）。
+
+    1) settings 表防重：当天已推送直接返回（后端重启 misfire 补跑 / 与其他
+       通道双发时不会重复推）
+    2) 复用 run_startup_catchup 确保今日计划存在（21:00 前补生成 + 幂等确认）
+    3) preview_plan_text 取推送文本（本地无计划自动回退 Notion 日历）
+    4) clawbot CLI 推送，成功后才写当日标记
+    """
+    from backend.database import SessionLocal
+    from backend.models import Setting
+    from backend.mcp_server.service import preview_plan_text, shanghai_today
+
+    now = now or datetime.now(_SHANGHAI)
+    today = shanghai_today()
+    try:
+        with SessionLocal() as db:
+            mark = (
+                db.query(Setting)
+                .filter(Setting.key == MORNING_PUSH_MARK_KEY)
+                .first()
+            )
+            if mark is not None and mark.value == today.isoformat():
+                logger.info("晨间推送：今天（%s）已推送过，跳过", today.isoformat())
+                return
+        # 确保今日计划存在（空计划 + 早于 20:00 会补生成并确认；已有计划则无操作）
+        run_startup_catchup(now)
+        with SessionLocal() as db:
+            text = preview_plan_text(db, today)
+        ok, detail = _push_text_via_cli(text)
+        if not ok:
+            logger.warning("晨间推送失败（date=%s）：%s", today.isoformat(), detail)
+            return
+        with SessionLocal() as db:
+            mark = (
+                db.query(Setting)
+                .filter(Setting.key == MORNING_PUSH_MARK_KEY)
+                .first()
+            )
+            if mark is None:
+                mark = Setting(key=MORNING_PUSH_MARK_KEY, value="")
+                db.add(mark)
+            mark.value = today.isoformat()
+            db.commit()
+        logger.info("晨间推送完成：date=%s detail=%s", today.isoformat(), detail)
+    except Exception:  # noqa: BLE001 —— 定时任务不允许崩溃
+        logger.exception("晨间推送任务失败（date=%s）", today.isoformat())
