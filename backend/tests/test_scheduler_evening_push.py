@@ -5,6 +5,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import backend.mcp_server.scheduler_jobs as sj
+import backend.mcp_server.wechat_push as wp
 from backend.models.plan import PlanItem
 from backend.models.settings import Setting
 
@@ -28,7 +29,7 @@ def _patch(db_session, monkeypatch, push_result=(True, "HTTP 200 | 发送成功"
 
     monkeypatch.setattr("backend.database.SessionLocal", db_session)
     monkeypatch.setattr(sj, "_build_writer_safe", lambda db: (None, None))
-    monkeypatch.setattr(sj, "_push_text_via_cli", fake_push)
+    monkeypatch.setattr(wp, "push_text_via_cli", fake_push)
     return calls
 
 

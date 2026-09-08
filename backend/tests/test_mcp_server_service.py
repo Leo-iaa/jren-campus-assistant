@@ -634,11 +634,16 @@ def test_list_reviews_filter(db_session):
 
 
 def _fixed_today(monkeypatch) -> date:
-    """固定「今天」= 2026-08-24（周一，weekday()=0），避免依赖真实日期。"""
+    """固定「今天」= 2026-08-24（周一，weekday()=0），避免依赖真实日期。
+
+    add_task 实现在 task_intake 模块（service 只是门面），两处一起 patch。
+    """
     today = date(2026, 8, 24)
     import backend.mcp_server.service as svc
+    import backend.mcp_server.task_intake as intake
 
     monkeypatch.setattr(svc, "shanghai_today", lambda: today)
+    monkeypatch.setattr(intake, "shanghai_today", lambda: today)
     return today
 
 

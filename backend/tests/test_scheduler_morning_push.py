@@ -5,6 +5,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import backend.mcp_server.scheduler_jobs as sj
+import backend.mcp_server.wechat_push as wp
 from backend.models.plan import PlanItem
 from backend.models.settings import Setting
 
@@ -28,7 +29,7 @@ def _patch(db_session, monkeypatch, push_result=(True, "HTTP 200 | 发送成功"
 
     monkeypatch.setattr("backend.database.SessionLocal", db_session)
     monkeypatch.setattr(sj, "_build_writer_safe", lambda db: (None, None))
-    monkeypatch.setattr(sj, "_push_text_via_cli", fake_push)
+    monkeypatch.setattr(wp, "push_text_via_cli", fake_push)
     return calls
 
 
@@ -159,7 +160,7 @@ def test_push_cli_injects_user_home(monkeypatch):
         return P()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    ok, _ = sj._push_text_via_cli("x")
+    ok, _ = wp.push_text_via_cli("x")
     assert ok
     env = captured.get("env")
     assert env is not None, "应给子进程显式传 env"
@@ -181,13 +182,13 @@ def test_push_cli_parses_subprocess_result(monkeypatch):
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **kw: P(0, "HTTP 200 | 发送成功\n[OK] 已主动推送")
     )
-    ok, detail = sj._push_text_via_cli("x")
+    ok, detail = wp.push_text_via_cli("x")
     assert ok and "发送成功" in detail
 
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **kw: P(0, "HTTP 200 | errcode None |  | ret -2")
     )
-    ok, detail = sj._push_text_via_cli("x")
+    ok, detail = wp.push_text_via_cli("x")
     assert not ok and "ret -2" in detail, "无成功标志即视为失败"
     assert "acquire_token" in detail, "ret -2 也应附 token 刷新指引"
 
@@ -196,7 +197,7 @@ def test_push_cli_parses_subprocess_result(monkeypatch):
         "run",
         lambda *a, **kw: P(0, "token 已失效(errcode -14)：请重新调用 acquire_token 获取。"),
     )
-    ok, detail = sj._push_text_via_cli("x")
+    ok, detail = wp.push_text_via_cli("x")
     assert not ok and "acquire_token" in detail, "token 失效应附刷新指引"
 
     monkeypatch.setattr(
@@ -204,5 +205,5 @@ def test_push_cli_parses_subprocess_result(monkeypatch):
         "run",
         lambda *a, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired("cmd", 90)),
     )
-    ok, detail = sj._push_text_via_cli("x")
+    ok, detail = wp.push_text_via_cli("x")
     assert not ok and detail, "超时不抛异常、返回失败详情"
