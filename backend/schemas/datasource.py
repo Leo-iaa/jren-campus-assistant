@@ -4,13 +4,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DataSourceType = Literal["notion", "obsidian", "ical", "caldav", "coros"]
+DataSourceType = Literal["notion", "ical", "caldav"]
 
 
 class DataSourceBase(BaseModel):
     source_type: DataSourceType
     name: str | None = Field(default=None, max_length=100)
-    config: str | None = Field(default=None, description="JSON 字符串：OAuth token / vault 路径 / URL")
+    config: str | None = Field(default=None, description="JSON 字符串：OAuth token / URL")
     enabled: bool = True
     last_sync_at: str | None = None
 
@@ -75,7 +75,6 @@ class SyncRequest(BaseModel):
     mode: Literal["merge", "overwrite"] = Field(
         default="merge", description="iCal：merge 只补空缺不覆盖手改；overwrite 全量覆盖 iCal 字段"
     )
-    query: str | None = Field(default=None, description="Obsidian：全文搜索关键词（缺省为列出全部笔记）")
     database_id: str | None = Field(default=None, description="Notion：作业数据库 ID（缺省用 config.database_id）")
 
 
@@ -113,27 +112,5 @@ class OAuthCallbackRequest(BaseModel):
 
 
 class OAuthCallbackRead(BaseModel):
-    source_id: int
-    ok: bool = True
-
-
-# ---------- COROS OAuth（官方 CLI 登录会话流） ----------
-class CorosOAuthStartRequest(BaseModel):
-    """发起 COROS 授权（缺省 source_id 时自动新建 coros 数据源）。"""
-
-    source_id: int | None = None
-
-
-class CorosLoginStartRead(BaseModel):
-    source_id: int
-    login_url: str  # 用户在浏览器（手机/电脑均可）打开完成 COROS 登录
-
-
-class CorosOAuthFinishRequest(BaseModel):
-    source_id: int
-    timeout: int | None = Field(default=30, description="轮询等待秒数（1-300，默认 30）")
-
-
-class CorosOAuthFinishRead(BaseModel):
     source_id: int
     ok: bool = True
