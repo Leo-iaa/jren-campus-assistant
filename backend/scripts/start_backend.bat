@@ -21,9 +21,11 @@ REM either uncomment and fill below, or set config.calendar_database_id
 REM set JREN_NOTION_CALENDAR_DB=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 REM ---- start backend ----
+REM PYTHONUTF8=1: force UTF-8 stdio so server.log stays single-encoding
 echo [%date% %time%] starting uvicorn >> "backend\data\server.log" 2>nul
-if exist "backend\.venv\Scripts\python.exe" (
-  "backend\.venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 28070 >> "backend\data\server.log" 2>&1
+set PYTHONUTF8=1
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 28070 >> "backend\data\server.log" 2>&1
 ) else (
   py -3 -m uvicorn backend.main:app --host 0.0.0.0 --port 28070 >> "backend\data\server.log" 2>&1
 )

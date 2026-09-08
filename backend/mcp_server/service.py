@@ -182,10 +182,29 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
     #     画像为空时全部为空 → 规划行为与旧版完全一致
     prefs = profile_store.load_planner_prefs(db, plan_date)
 
-    # 1.8 B 档标注选任务（Issue #76）：先于课程草案构建——从当日未完成任务里
-    #     按 ddl 升序给每门 B 档课挑一件「课上可做的事」（一门课一件，不重复）；
-    #     被选中的任务不再单独排进计划（就在 B 档课上做，效率减半）。
-    #     无任务可标时回退通用文案。
+    # 1.2 S 档课后复习（Issue #74）：每门 S 档课程上完后自动安排 1 小时复习，
+    #     not_before 紧排课后（规划器保证不早于该课程结束时间）。
+    #     被 B 档水课标注选中的复习不再单独排（就在水课上复习，见 1.8）
+    s_review_drafts: list[PlanItemDraft] = [
+        PlanItemDraft(
+            date=plan_date,
+            start=time(0, 0),  # 占位：规划器只取 end-start 作为时长
+            end=_minutes_to_time(S_REVIEW_MINUTES),
+            item_type="review",
+            ref_id=None,
+            title=f"复习 · {s.course.name}（课后）",
+            not_before=parse_hhmm(s.end_time),
+        )
+        for s in sessions
+        if s.course.tier == "S"
+    ]
+
+    # 1.8 B 档标注选活（Issue #76 + #水课复习）：先于课程草案构建——给每门 B 档课
+    #     挑一件「课上可做的事」（一门课一件，不重复），优先级：
+    #       ① 未完成任务（按 ddl 升序，越急越先在课上写）
+    #       ② S 档课后复习（水课可用来复习，前提是该水课不早于那门 S 档课下课）
+    #     被选中的任务/复习不再单独排进计划（就在 B 档课上做，效率减半）。
+    #     无可标注时回退通用文案。
     iso = plan_date.isoformat()
     pending_tasks = (
         db.query(Task).filter(Task.status.in_(["todo", "doing"])).order_by(Task.id).all()
@@ -196,20 +215,32 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
     ]
     b_annotation: dict[int, str] = {}
     annotated_task_ids: set[int] = set()
+    annotated_s_review_idx: set[int] = set()
     for s in sessions:
         if s.course.tier != "B":
             continue
-        if not unexpired_tasks:
-            b_annotation[s.id] = "可做别的事，效率减半"
-            continue
         candidates = [t for t in unexpired_tasks if t.id not in annotated_task_ids]
-        if not candidates:
-            b_annotation[s.id] = "可做别的事，效率减半"
+        if candidates:
+            candidates.sort(key=lambda t: (t.deadline or "9999-12-31", t.id))
+            pick = candidates[0]
+            annotated_task_ids.add(pick.id)
+            b_annotation[s.id] = f"可写{pick.title}"
             continue
-        candidates.sort(key=lambda t: (t.deadline or "9999-12-31", t.id))
-        pick = candidates[0]
-        annotated_task_ids.add(pick.id)
-        b_annotation[s.id] = f"可写{pick.title}"
+        # 任务挑完 → 剩下的 B 档课用来做 S 档课后复习（水课复习，效率减半）
+        review_candidates = [
+            (idx, d)
+            for idx, d in enumerate(s_review_drafts)
+            if idx not in annotated_s_review_idx
+            and d.not_before is not None
+            and d.not_before <= parse_hhmm(s.start_time)
+        ]
+        if review_candidates:
+            idx, pick_review = review_candidates[0]
+            annotated_s_review_idx.add(idx)
+            core = pick_review.title.replace("复习 · ", "").replace("（课后）", "")
+            b_annotation[s.id] = f"可复习{core}"
+            continue
+        b_annotation[s.id] = "可做别的事，效率减半"
 
     course_drafts = [
         PlanItemDraft(
@@ -228,22 +259,6 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
             release_slot=False,
         )
         for s in sessions
-    ]
-
-    # 1.2 S 档课后复习（Issue #74）：每门 S 档课程上完后自动安排 1 小时复习，
-    #     not_before 紧排课后（规划器保证不早于该课程结束时间）
-    s_review_drafts: list[PlanItemDraft] = [
-        PlanItemDraft(
-            date=plan_date,
-            start=time(0, 0),  # 占位：规划器只取 end-start 作为时长
-            end=_minutes_to_time(S_REVIEW_MINUTES),
-            item_type="review",
-            ref_id=None,
-            title=f"复习 · {s.course.name}（课后）",
-            not_before=parse_hhmm(s.end_time),
-        )
-        for s in sessions
-        if s.course.tier == "S"
     ]
 
     # 2. 作业任务（未完成且 deadline 未早于当日；无预估时长用默认值）。
@@ -336,7 +351,9 @@ def generate_plan(db: Session, plan_date: date) -> GeneratePlanResult:
         plan_date,
         course_drafts,
         task_drafts,
-        review_drafts + s_review_drafts,
+        # 被 B 档水课标注选走的 S 档课后复习不再单独排（就在水课上复习，见 1.8）
+        review_drafts
+        + [d for i, d in enumerate(s_review_drafts) if i not in annotated_s_review_idx],
         misc_drafts,
         study_hours,
         brain_curfew=prefs.no_brain_after,
@@ -464,6 +481,29 @@ def _preview_from_notion(db: Session, plan_date: date) -> list[str]:
         return []
 
 
+def _routine_lines(db: Session, plan_date: date) -> list[str]:
+    """当日生效的固定作息（画像 fixed_activities）→ 预览提示行。
+
+    只展示、不占排程（排程侧由 planner 的 extra_barriers 处理），
+    让用户一眼看出计划确实按自己的作息来排。任何异常都不影响预览。
+    """
+    try:
+        profile = profile_store.get_profile(db)
+        weekday_cn = "一二三四五六日"[plan_date.weekday()]
+        acts = [
+            a
+            for a in profile.get("fixed_activities") or []
+            if a.get("days") == "每天" or weekday_cn in (a.get("days") or "")
+        ]
+        if not acts:
+            return []
+        acts.sort(key=lambda a: a["start"])
+        body = " · ".join(f"{a['start']}-{a['end']} {a['title']}" for a in acts)
+        return ["", "🧩 今日作息（固定安排，不占排程）", f"🕗 {body}"]
+    except Exception:  # noqa: BLE001 —— 预览宁可少一行，也不能崩
+        return []
+
+
 def preview_plan_text(db: Session, plan_date: date) -> str:
     """今日/某日计划 → 微信友好文本（供 WorkBuddy 08:00 推送）。"""
     iso = plan_date.isoformat()
@@ -511,6 +551,8 @@ def preview_plan_text(db: Session, plan_date: date) -> str:
                 if session and session.location:
                     location = f" · {session.location}"
             lines.append(f"🕗 {it.start_time}-{it.end_time} {it.title}{location}")
+
+    lines.extend(_routine_lines(db, plan_date))
 
     lines.append("")
     lines.append("💬 回复「确认今天的计划」；调整可说「把 XXX 挪到 HH:MM」。")

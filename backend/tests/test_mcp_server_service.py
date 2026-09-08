@@ -3,6 +3,7 @@
 使用 conftest 的临时 SQLite 数据库夹具，不依赖任何外部服务。
 """
 from datetime import date, timedelta
+import json
 
 import pytest
 
@@ -17,6 +18,7 @@ from backend.models import (
     ReviewSchedule,
     Task,
 )
+from backend.mcp_server import profile_store
 from backend.mcp_server.notion_calendar import CalendarSyncResult
 from backend.mcp_server.service import (
     add_task,
@@ -122,6 +124,100 @@ def test_generate_plan_basic(db_session):
         # S 档课后复习紧排课后（08:00-09:40 课程 → 09:40 开始）
         s_review = next(i for i in items if i.title == "复习 · 高等数学（课后）")
         assert (s_review.start_time, s_review.end_time) == ("09:40", "10:40")
+
+
+def test_preview_shows_today_routine(db_session):
+    """预览末尾展示当日生效的固定作息（只展示不占排程，按星期过滤）。"""
+    with db_session() as db:  # PLAN_DATE 是周三
+        seed_basic(db)
+        profile_store.save_manual_prefs(
+            db,
+            fixed_activities=json.dumps(
+                [
+                    {"title": "午觉", "days": "每天", "start": "13:00", "end": "13:45"},
+                    {"title": "跑步", "days": "三", "start": "16:00", "end": "17:00"},
+                    {"title": "剪指甲", "days": "日", "start": "21:15", "end": "21:25"},
+                ]
+            ),
+        )
+        generate_plan(db, PLAN_DATE)
+        text = preview_plan_text(db, PLAN_DATE)
+
+        assert "🧩 今日作息" in text
+        assert "13:00-13:45 午觉" in text  # 每天
+        assert "16:00-17:00 跑步" in text  # 周三分生效
+        assert "剪指甲" not in text  # 周日项不在周三出现
+        # 固定作息只是提示，不变成计划条目
+        assert not any(i.title == "午觉" for i in plan_items(db))
+
+
+def test_b_course_annotates_s_review_when_no_task(db_session):
+    """没作业可写时，B 档水课用来做 S 档课后复习（水课复习，效率减半）。"""
+    with db_session() as db:
+        s_course = Course(name="高等数学", tier="S")
+        b_course = Course(name="大学英语", tier="B")
+        db.add_all([s_course, b_course])
+        db.flush()
+        db.add(
+            CourseSession(
+                course_id=s_course.id,
+                day_of_week=PLAN_DATE.weekday(),
+                start_time="08:00",
+                end_time="09:40",
+                release_slot=0,
+            )
+        )
+        db.add(
+            CourseSession(
+                course_id=b_course.id,
+                day_of_week=PLAN_DATE.weekday(),
+                start_time="14:00",
+                end_time="15:40",
+                release_slot=1,
+            )
+        )
+        db.commit()
+
+        result = generate_plan(db, PLAN_DATE)
+        course_titles = {i.title for i in plan_items(db) if i.item_type == "course"}
+        assert course_titles == {"高等数学", "大学英语（可复习高等数学）"}
+        # 复习被水课消化 → 不再单独占一个 60 分钟时段（也就不会被 dropped）
+        assert not any(i.title == "复习 · 高等数学（课后）" for i in plan_items(db))
+        assert result.dropped == []
+
+
+def test_b_course_not_annotated_before_s_class_ends(db_session):
+    """水课早于 S 档课下课 → 不能拿它复习那门还没上的课。"""
+    with db_session() as db:
+        s_course = Course(name="高等数学", tier="S")
+        b_course = Course(name="大学英语", tier="B")
+        db.add_all([s_course, b_course])
+        db.flush()
+        db.add(
+            CourseSession(
+                course_id=b_course.id,
+                day_of_week=PLAN_DATE.weekday(),
+                start_time="08:00",
+                end_time="09:40",
+                release_slot=1,
+            )
+        )
+        db.add(
+            CourseSession(
+                course_id=s_course.id,
+                day_of_week=PLAN_DATE.weekday(),
+                start_time="14:00",
+                end_time="15:40",
+                release_slot=0,
+            )
+        )
+        db.commit()
+
+        generate_plan(db, PLAN_DATE)
+        course_titles = {i.title for i in plan_items(db) if i.item_type == "course"}
+        assert course_titles == {"高等数学", "大学英语（可做别的事，效率减半）"}
+        # 课后复习仍按原逻辑排在 15:40 之后
+        assert any(i.title == "复习 · 高等数学（课后）" for i in plan_items(db))
 
 
 def test_generate_plan_skips_when_day_confirmed(db_session):
