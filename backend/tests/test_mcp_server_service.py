@@ -127,7 +127,7 @@ def test_generate_plan_basic(db_session):
 
 
 def test_preview_shows_today_routine(db_session):
-    """预览末尾展示当日生效的固定作息（只展示不占排程，按星期过滤）。"""
+    """预览时间轴混排当日固定作息（☀️ 标注，按星期过滤，不占排程）。"""
     with db_session() as db:  # PLAN_DATE 是周三
         seed_basic(db)
         profile_store.save_manual_prefs(
@@ -143,10 +143,11 @@ def test_preview_shows_today_routine(db_session):
         generate_plan(db, PLAN_DATE)
         text = preview_plan_text(db, PLAN_DATE)
 
-        assert "🧩 今日作息" in text
-        assert "13:00-13:45 午觉" in text  # 每天
-        assert "16:00-17:00 跑步" in text  # 周三分生效
+        assert "☀️ 13:00-13:45 午觉" in text  # 每天
+        assert "☀️ 16:00-17:00 跑步" in text  # 周三分生效
         assert "剪指甲" not in text  # 周日项不在周三出现
+        # 时间轴按开始时间排序（作息行 13:00 排在课程 08:00 之后）
+        assert text.index("08:00") < text.index("13:00")
         # 固定作息只是提示，不变成计划条目
         assert not any(i.title == "午觉" for i in plan_items(db))
 
@@ -316,6 +317,7 @@ def test_generate_plan_ignores_overdue_tasks(db_session):
 
 
 def test_preview_plan_text(db_session):
+    """时间轴格式：计划项与作息混排，按开始时间排序，不分组。"""
     with db_session() as db:
         seed_basic(db)
         generate_plan(db, PLAN_DATE)
@@ -323,8 +325,13 @@ def test_preview_plan_text(db_session):
 
         assert "2026-08-19" in text and "周三" in text
         assert "⏳ 待确认" in text
-        assert "📚 课程（2）" in text
-        assert "高等数学" in text and "教西A1-101" in text  # 教室从 session 冗余展示
+        assert "📚" not in text  # 不再按类型分组
+        # 时间轴按开始时间混排：课程 08:00 → S档复习 09:40 → 英语课 14:00
+        rows = [line for line in text.split("\n") if line.startswith(("08:", "09:", "14:"))]
+        assert len(rows) >= 3
+        assert "08:00-09:40 高等数学" in rows[0]
+        assert "教西A1-101" in rows[0]  # 教室从 session 冗余展示
+        assert "09:40-10:40 复习 · 高等数学（课后）" in rows[1]
         assert "大学英语（可写高数作业）" in text  # B 档标注：括号里写明课上干什么（Issue #76）
         assert "泰勒展开" in text
         assert "取快递" in text
