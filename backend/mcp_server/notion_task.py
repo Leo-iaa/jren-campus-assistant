@@ -52,8 +52,9 @@ class NotionTaskError(Exception):
 class NotionTaskWriter:
     """把任务写入 Notion 任务数据库。
 
-    ``create_task`` 每次调用先探测数据库属性（``retrieve_database``），
-    仅写入真实存在的属性；缺失属性进入 ``missing_props`` 报告。
+    ``create_task`` / ``update_task`` 每次调用先探测数据库属性
+    （``retrieve_database``），仅写入真实存在的属性；缺失属性进入
+    ``missing_props`` 报告。
     """
 
     def __init__(
@@ -117,6 +118,77 @@ class NotionTaskWriter:
         except Exception as exc:  # noqa: BLE001 —— 统一转中文异常
             raise NotionTaskError(f"Notion 任务库写入失败：{exc}") from exc
         return {"page_id": page.get("id"), "missing_props": missing}
+
+    def update_task(self, page_id: str, task: dict) -> dict:
+        """更新已写入 Notion 任务库的条目（只改有值字段；属性探测降级）。
+
+        ``task`` 字段均可选：title / deadline（YYYY-MM-DD）/ task_type。
+        status 变更走 ``set_status``。
+
+        返回 ``{"updated": True, "missing_props": [...]}``；
+        传输错误抛 ``NotionTaskError``。
+        """
+        db_id = self._database_id()
+        try:
+            schema = self._client.retrieve_database(db_id)
+            present = set((schema.get("properties") or {}).keys())
+            properties: dict = {}
+            missing: list[str] = []
+
+            title = task.get("title")
+            if title:
+                properties[self.props["title"]] = {
+                    "title": [{"type": "text", "text": {"content": title}}]
+                }
+
+            deadline = task.get("deadline")
+            if deadline:
+                if self.props["date"] in present:
+                    properties[self.props["date"]] = {"date": {"start": deadline}}
+                else:
+                    missing.append(self.props["date"])
+
+            task_type = task.get("task_type")
+            if task_type:
+                if self.props["type"] in present:
+                    properties[self.props["type"]] = {"select": {"name": task_type}}
+                else:
+                    missing.append(self.props["type"])
+
+            if properties:
+                self._client.update_page(page_id, properties)
+        except Exception as exc:  # noqa: BLE001 —— 统一转中文异常
+            raise NotionTaskError(f"Notion 任务库更新失败：{exc}") from exc
+        return {"updated": True, "missing_props": missing}
+
+    def set_status(self, page_id: str, done: bool) -> dict:
+        """把任务条目状态置为「完成」或回退到初始待办状态。
+
+        从 status 属性 options 里找「完成/done」选项；找不到（属性缺失或
+        选项命名不同）返回 ``{"updated": False, ...}`` 不报错。
+        """
+        try:
+            schema = self._client.retrieve_database(self._database_id())
+            status_prop = (schema.get("properties") or {}).get(self.props["status"])
+            target: str | None = None
+            if done:
+                prop = status_prop.get("status") if isinstance(status_prop, dict) else None
+                prop = prop if isinstance(prop, dict) else status_prop
+                for opt in (prop or {}).get("options") or []:
+                    name = str(opt.get("name", ""))
+                    if "完成" in name or "done" in name.lower():
+                        target = opt.get("name")
+                        break
+            else:
+                target = self._initial_status_name(status_prop)
+            if not target:
+                return {"updated": False, "missing_props": [self.props["status"]]}
+            self._client.update_page(
+                page_id, {self.props["status"]: {"status": {"name": target}}}
+            )
+            return {"updated": True, "missing_props": []}
+        except Exception as exc:  # noqa: BLE001 —— 统一转中文异常
+            raise NotionTaskError(f"Notion 任务库状态更新失败：{exc}") from exc
 
     # ---------- 内部 ----------
 
