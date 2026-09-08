@@ -4,7 +4,6 @@
   merge（默认）只补空缺字段，不覆盖手改（手动维护兜底）；
   overwrite 全量覆盖 iCal 相关字段（仍不删除任何行，删除走手动 CRUD）
 - Notion → tasks（按 source_ref 幂等 upsert，source='notion'，token 过期自动刷新）
-- Obsidian → 仅查询接口，不落库（知识点提取归知识提取模块）
 
 同步成功后统一更新 data_sources.last_sync_at。
 """
@@ -20,21 +19,10 @@ import httpx
 
 from backend.models import Course, CourseSession, DataSource, Task
 from backend.mcp_client.ical import IcalAdapter
-from backend.mcp_client.coros import (
-    DEFAULT_CLIENT_NAME,
-    DEFAULT_ISSUER,
-    DEFAULT_REDIRECT_URI,
-    CorosAdapter,
-    CorosAuthError,
-    CorosError,
-    CorosOAuthConfig,
-    refresh_token,
-)
-from backend.mcp_client.models import CourseSessionItem, NoteItem, SyncResult, TaskItem
+from backend.mcp_client.models import SyncResult, TaskItem  # noqa: F401 (TaskItem 供类型引用)
 from backend.mcp_client.notion import NotionAdapter
 from backend.mcp_client.notion_rest import NotionRestError
 from backend.mcp_client.oauth import DEFAULT_AUTH_URL, DEFAULT_TOKEN_URL, OAuthClient, OAuthConfig, OAuthToken
-from backend.mcp_client.obsidian import ObsidianAdapter
 from backend.mcp_client.transport import JsonRpcError
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -109,11 +97,6 @@ def build_adapter(source: DataSource):
     if source.source_type == "notion":
         tokens = config.get("tokens") or {}
         return NotionAdapter(config, access_token=tokens.get("access_token"))
-    if source.source_type == "obsidian":
-        return ObsidianAdapter(config)
-    if source.source_type == "coros":
-        tokens = config.get("tokens") or {}
-        return CorosAdapter(config, access_token=tokens.get("access_token"))
     raise SyncError(f"不支持的数据源类型：{source.source_type}")
 
 
@@ -299,93 +282,11 @@ def _sync_notion(db, source: DataSource, database_id: str | None = None, max_pag
     )
 
 
-def _sync_obsidian(db, source: DataSource, query: str | None = None, limit: int = 20) -> SyncResult:
-    config = _load_config(source)
-    adapter = ObsidianAdapter(config)
-    try:
-        if query:
-            items: list[NoteItem] = adapter.search(query, limit=limit)
-        else:
-            items = adapter.list_notes(limit=limit)
-    except ValueError as exc:
-        raise SyncError(str(exc)) from exc
-    except JsonRpcError as exc:
-        raise SyncError(f"Obsidian MCP 调用失败：{exc}") from exc
-
-    # 只做接入与查询，不落库（知识点提取归知识提取模块）
-    return SyncResult(
-        source_id=source.id,
-        source_type="obsidian",
-        synced_at=_now_iso(),
-        fetched=len(items),
-    )
-
-
-def build_coros_oauth(config: dict | None = None) -> CorosOAuthConfig:
-    """按数据源 config 构造 COROS OAuth 配置（端点可覆盖，缺省官方网关）。"""
-    cfg = config if config is not None else {}
-    return CorosOAuthConfig(
-        issuer=cfg.get("issuer", DEFAULT_ISSUER),
-        client_name=cfg.get("client_name", DEFAULT_CLIENT_NAME),
-        redirect_uri=cfg.get("redirect_uri", DEFAULT_REDIRECT_URI),
-    )
-
-
-def _sync_coros(db, source: DataSource) -> SyncResult:
-    """COROS 同步：查询型数据源，不落库（COROS 服务器有完整历史）。
-
-    校验 token 可用性（过期前自动 refresh 并写回 config）+ 拉一次近 7 天
-    跑步快照确认链路连通；数据由训练计划工具实时查询。
-    """
-    config = _load_config(source)
-    tokens = config.get("tokens") or {}
-    if not tokens.get("access_token"):
-        raise SyncAuthError(
-            "COROS 未授权：请先通过 POST /api/data-sources/coros/oauth/start 完成登录授权"
-        )
-
-    # token 过期 → 尝试 refresh（成功后把新 token 写回 config）
-    try:
-        expires_at = float(tokens["expires_at"]) if tokens.get("expires_at") else None
-    except (TypeError, ValueError):
-        expires_at = None
-    if expires_at is not None and expires_at < time.time() + 60:
-        refresh = tokens.get("refresh_token")
-        client_id = tokens.get("client_id")
-        if not refresh or not client_id:
-            raise SyncAuthError("COROS token 已过期且无 refresh_token / client_id，请重新授权")
-        try:
-            fresh = refresh_token(build_coros_oauth(config), client_id, refresh)
-        except (CorosError, httpx.HTTPError) as exc:
-            raise SyncError(f"COROS token 刷新失败：{exc}") from exc
-        fresh["client_id"] = client_id
-        config["tokens"] = fresh
-        _save_config(source, config)
-        tokens = fresh
-
-    adapter = CorosAdapter(config, access_token=tokens.get("access_token"))
-    try:
-        snapshot = adapter.fetch_running_snapshot(days=7)
-    except CorosError as exc:
-        raise SyncError(f"COROS 数据查询失败：{exc}") from exc
-    finally:
-        adapter.close()
-
-    return SyncResult(
-        source_id=source.id,
-        source_type="coros",
-        synced_at=_now_iso(),
-        fetched=len(snapshot.activities),
-        warnings=snapshot.warnings,
-    )
-
-
 def sync_data_source(
     db,
     source: DataSource,
     ics_content: str | None = None,
     mode: str = "merge",
-    query: str | None = None,
     database_id: str | None = None,
 ) -> SyncResult:
     """按数据源类型分发同步，成功后更新 last_sync_at。"""
@@ -393,10 +294,6 @@ def sync_data_source(
         result = _sync_ical(db, source, ics_content=ics_content, mode=mode)
     elif source.source_type == "notion":
         result = _sync_notion(db, source, database_id=database_id)
-    elif source.source_type == "obsidian":
-        result = _sync_obsidian(db, source, query=query)
-    elif source.source_type == "coros":
-        result = _sync_coros(db, source)
     else:
         raise SyncError(f"暂不支持同步的数据源类型：{source.source_type}")
     source.last_sync_at = _now_iso()

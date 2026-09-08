@@ -7,13 +7,15 @@
     uvicorn main:app --reload
 
 MCP Server（Streamable HTTP）挂载在 /mcp 路径（WorkBuddy 接入地址：
-http://<局域网IP>:28070/mcp），其会话管理器生命周期由本应用 lifespan 接管；
-APScheduler 21:00 定时任务同样在 lifespan 中按配置启停。
+http://<局域网IP>:28070/mcp），其会话管理器生命周期由本应用 lifespan 接管。
+
+定时任务（每晚生成次日计划 / 推送微信）由 WorkBuddy 侧承担：WorkBuddy
+定时任务调 MCP 工具（generate_tomorrow_plan / get_today_plan_preview），
+后端本身不注册任何调度器。
 """
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-import asyncio
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,16 +28,11 @@ from backend.api import api_router
 from backend.api.health import router as health_router
 from backend.config import settings
 from backend.database import init_db
-from backend.mcp_server.scheduler_jobs import (
-    run_startup_catchup,
-    start_scheduler_if_enabled,
-    stop_scheduler,
-)
 from backend.mcp_server.server import build_mcp_server
 
 
 def create_app(db_factory: Callable[[], Session] | None = None) -> FastAPI:
-    """应用工厂：集中组装中间件、路由、MCP Server 与生命周期。
+    """应用工厂：集中组装中间件、路由与 MCP Server。
 
     ``db_factory`` 仅供测试注入临时数据库（MCP 工具使用）；默认为全局 SessionLocal。
     """
@@ -57,13 +54,7 @@ def create_app(db_factory: Callable[[], Session] | None = None) -> FastAPI:
             init_db()
         # MCP 会话管理器必须在请求前启动（内嵌 ASGI 应用无自己的 lifespan）
         async with mcp_server.session_manager.run():
-            # 启动补偿先于调度器启动：先补齐关机/休眠错过的计划缺口，调度器
-            # 再接管（否则补偿与 misfire 补跑的晨间任务可能并发重复生成）。
-            # 线程内跑：内部含 Notion 网络写入，不能阻塞事件循环
-            await asyncio.to_thread(run_startup_catchup)
-            start_scheduler_if_enabled()
             yield
-            stop_scheduler()
 
     app = FastAPI(
         title=settings.app_name,

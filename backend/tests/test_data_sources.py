@@ -5,16 +5,16 @@ def test_create_data_source(client):
     resp = client.post(
         "/api/data-sources",
         json={
-            "source_type": "obsidian",
-            "name": "本地笔记库",
-            "config": '{"vault_path": "C:/notes"}',
+            "source_type": "ical",
+            "name": "课表",
+            "config": '{"ics_path": "C:/schedule.ics"}',
         },
     )
     assert resp.status_code == 201
     body = resp.json()
-    assert body["source_type"] == "obsidian"
+    assert body["source_type"] == "ical"
     assert body["enabled"] is True
-    assert body["config"] == '{"vault_path": "C:/notes"}'
+    assert body["config"] == '{"ics_path": "C:/schedule.ics"}'
 
 
 def test_list_and_filter(client):

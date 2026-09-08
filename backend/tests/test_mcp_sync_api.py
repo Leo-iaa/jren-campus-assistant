@@ -9,7 +9,7 @@ import json
 import time
 from unittest.mock import MagicMock
 
-from backend.mcp_client.models import CourseSessionItem, NoteItem, TaskItem
+from backend.mcp_client.models import CourseSessionItem, TaskItem
 from backend.mcp_client.oauth import OAuthToken
 from backend.models import DataSource
 from tests.fakes import SAMPLE_ICS
@@ -126,7 +126,7 @@ def test_sync_disabled_source_409(client):
 
 
 def test_enable_disable_endpoints(client):
-    source = _create_source(client, "obsidian", {"vault_path": "C:/vault"})
+    source = _create_source(client, "ical", {"ics_path": "C:/schedule.ics"})
     assert source["enabled"] is True
 
     disabled = client.post(f"/api/data-sources/{source['id']}/disable").json()
@@ -227,25 +227,6 @@ def test_notion_sync_missing_database_id_400(client, monkeypatch):
     resp = client.post(f"/api/data-sources/{source['id']}/sync")
     assert resp.status_code == 400
 
-
-# ---------- Obsidian 同步 ----------
-
-
-def test_obsidian_sync_queries_and_records_time(client, monkeypatch):
-    source = _create_source(client, "obsidian", {"vault_path": "C:/vault"})
-    fake = MagicMock()
-    fake.search.return_value = [NoteItem(path="数学/高数.md", title="高数", excerpt="极限的定义")]
-    monkeypatch.setattr("backend.mcp_client.service.ObsidianAdapter", lambda config: fake)
-
-    resp = client.post(f"/api/data-sources/{source['id']}/sync", json={"query": "极限"})
-    assert resp.status_code == 200
-    assert resp.json()["fetched"] == 1
-    assert resp.json()["created"] == 0  # 只查询不落库
-    assert fake.search.called
-
-    updated = client.get(f"/api/data-sources/{source['id']}").json()
-    assert updated["last_sync_at"]
-    assert len(_courses(client)) == 0  # 没有产生任何课程
 
 
 # ---------- Notion OAuth ----------

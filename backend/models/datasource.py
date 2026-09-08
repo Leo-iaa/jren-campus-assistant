@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from backend.models.base import Base, shanghai_now
 
 # 支持的数据源类型（新数据源 = 新增 MCP adapter）
-SOURCE_TYPES = ("notion", "obsidian", "ical", "caldav", "coros")
+SOURCE_TYPES = ("notion", "ical", "caldav")
 
 
 class DataSource(Base):
