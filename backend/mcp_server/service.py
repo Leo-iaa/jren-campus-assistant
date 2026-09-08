@@ -48,10 +48,12 @@ from backend.mcp_server.queries import list_courses, list_reviews, list_tasks  #
 from backend.mcp_server.task_intake import (  # noqa: F401
     TASK_TYPES,
     AddTaskResult,
+    UpdateTaskResult,
     add_task,
     day_locked,
     find_free_slot,
     task_to_dict,
+    update_task,
 )
 
 # 旧名兼容（测试 / running_service / scheduler_jobs 仍按旧名导入）

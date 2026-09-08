@@ -323,3 +323,115 @@ def add_task(
         placed=placed_dict,
         evicted=evicted,
     )
+
+
+@dataclass(frozen=True)
+class UpdateTaskResult:
+    """修改任务结果。"""
+
+    task: dict
+    notion_sync: dict | None = None  # 任务库更新结果或错误信息
+    plan_message: str = ""  # 计划联动中文说明
+
+
+def update_task(
+    db: Session,
+    *,
+    task_id: int,
+    title: str | None = None,
+    due_date: str | None = None,
+    task_type: str | None = None,
+    course_id: int | None = None,
+    estimated_minutes: int | None = None,
+    status: str | None = None,
+    task_writer=None,
+) -> UpdateTaskResult:
+    """修改任务：本地更新 → 同步 Notion 任务库（尽力而为）。
+
+    - 只改显式传入的字段（部分更新，未传字段保持不变）
+    - ``estimated_minutes`` 变更**不重排已有日程**（保持方案最小化；如需调整
+      时间块用 adjust_plan_item）——下次生成计划时自然采用新时长
+    - ``status`` 置 done 时同步 Notion 任务库状态为「完成」
+    - ``due_date`` / ``task_type`` / ``title`` 变更同步 Notion 对应属性
+    """
+    task = db.get(Task, task_id)
+    if task is None:
+        raise ValueError(f"任务不存在（id={task_id}）")
+
+    if due_date is not None:
+        parse_date(due_date)
+    if task_type is not None and task_type not in TASK_TYPES:
+        raise ValueError(f"未知任务类型: {task_type!r}（应为 {'/'.join(TASK_TYPES)}）")
+    if status is not None and status not in ("todo", "doing", "done", "cancelled"):
+        raise ValueError(f"未知任务状态: {status!r}（应为 todo/doing/done/cancelled）")
+    if course_id is not None and db.get(Course, course_id) is None:
+        raise ValueError(f"所属课程不存在（id={course_id}）")
+    if estimated_minutes is not None and estimated_minutes <= 0:
+        raise ValueError("预估时长必须为正整数分钟")
+
+    changed_notion_fields: list[str] = []
+    if title is not None and title.strip():
+        task.title = title.strip()
+        changed_notion_fields.append("标题")
+    if due_date is not None:
+        task.deadline = due_date
+        changed_notion_fields.append("截止日期")
+    if task_type is not None:
+        task.task_type = task_type
+        changed_notion_fields.append("类型")
+    if course_id is not None:
+        task.course_id = course_id
+    if estimated_minutes is not None:
+        task.estimated_minutes = estimated_minutes
+    if status is not None:
+        task.status = status
+    db.commit()
+    db.refresh(task)
+
+    # 2. 同步 Notion 任务库（尽力而为：无 source_ref / 未配置 / 失败均不阻断）
+    notion_sync: dict | None = None
+    if task_writer is not None and task.source_ref:
+        try:
+            payload: dict = {}
+            if title is not None and title.strip():
+                payload["title"] = task.title
+            if due_date is not None:
+                payload["deadline"] = task.deadline
+            if task_type is not None:
+                payload["task_type"] = task.task_type
+            result: dict = {"updated": True, "missing_props": []}
+            if payload:
+                result = task_writer.update_task(task.source_ref, payload)
+            if status is not None:
+                status_result = task_writer.set_status(task.source_ref, done=status == "done")
+                result["missing_props"] = list(
+                    set(result.get("missing_props", []))
+                    | set(status_result.get("missing_props", []))
+                )
+                if status_result.get("updated"):
+                    result["status_updated"] = True
+            notion_sync = result
+        except Exception as exc:  # noqa: BLE001 —— 任务库更新尽力而为
+            notion_sync = {"error": str(exc)}
+
+    # 3. 中文说明
+    parts: list[str] = []
+    if estimated_minutes is not None:
+        parts.append(f"预估时长改为 {estimated_minutes} 分钟")
+    if due_date is not None:
+        parts.append(f"截止改为 {due_date}")
+    if title is not None and title.strip():
+        parts.append(f"标题改为「{task.title}」")
+    if task_type is not None:
+        parts.append(f"类型改为 {task_type}")
+    if status is not None:
+        parts.append(f"状态改为 {status}")
+    message = f"已更新任务「{task.title}」：" + "、".join(parts) if parts else "任务无变更"
+    if changed_notion_fields and notion_sync and not notion_sync.get("error"):
+        message += f"（Notion 任务库已同步：{'、'.join(changed_notion_fields)}）"
+
+    return UpdateTaskResult(
+        task=task_to_dict(task),
+        notion_sync=notion_sync,
+        plan_message=message,
+    )

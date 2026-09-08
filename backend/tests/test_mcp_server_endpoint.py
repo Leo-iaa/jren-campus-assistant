@@ -20,6 +20,7 @@ EXPECTED_TOOLS = [
     "mark_done",
     "get_courses",
     "add_task",
+    "update_task",
     "get_tasks",
     "get_reviews",
     "get_user_profile",

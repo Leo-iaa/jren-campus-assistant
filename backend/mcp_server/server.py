@@ -43,6 +43,7 @@ from backend.mcp_server.service import (
     preview_plan_text,
     shanghai_today,
     tomorrow,
+    update_task,
 )
 
 #: 工具说明（WorkBuddy 等客户端据此理解用法）
@@ -77,6 +78,13 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
         "自动写入本地任务库与 Notion 任务库；无确认概念——无 ddl 或 ddl 是今天/明天的任务"
         "直接增量插入对应日期的空闲时段（不动已有安排）并同步 Notion 日历；"
         "ddl 更远则下次 21:00 生成时纳入。返回：task / plan_message / notion_sync。"
+    ),
+    "update_task": (
+        "修改已有任务（报错口误改时长/改期用）：task_id 必填，其余均可选——"
+        "title / due_date（YYYY-MM-DD）/ task_type（作业/实验/考试/其他）/ "
+        "estimated_minutes（分钟）/ status（todo/doing/done/cancelled）/ course_id。"
+        "只改传入的字段；本地与 Notion 任务库同步更新（尽力而为）。"
+        "注意：改时长不重排已生成的时间块（需调时间块用 adjust_plan_item）。"
     ),
     "mark_done": (
         "标记计划项完成：item_id 必填，actual_minutes 为实际耗时（分钟，可选）。"
@@ -332,6 +340,48 @@ def build_mcp_server(
                 + "、".join(sync["missing_props"])
                 + "，已跳过；在 Notion 补上后自动生效）"
             )
+        payload["message"] = message
+        return json.dumps(payload, ensure_ascii=False)
+
+    @server.tool(name="update_task", description=_TOOL_DESCRIPTIONS["update_task"])
+    @safe
+    def update_task_tool(
+        task_id: int,
+        title: str | None = None,
+        due_date: str | None = None,
+        task_type: str | None = None,
+        estimated_minutes: int | None = None,
+        status: str | None = None,
+        course_id: int | None = None,
+    ) -> str:
+        notion_error: str | None = None
+        task_writer = None
+        with session_scope() as db:
+            try:
+                task_writer = build_task_writer(db)
+            except NotionTaskError as exc:
+                notion_error = str(exc)
+            result = update_task(
+                db,
+                task_id=task_id,
+                title=title,
+                due_date=due_date,
+                task_type=task_type,
+                course_id=course_id,
+                estimated_minutes=estimated_minutes,
+                status=status,
+                task_writer=task_writer,
+            )
+        payload: dict[str, Any] = {
+            "task": result.task,
+            "notion_sync": result.notion_sync,
+        }
+        if notion_error and payload["notion_sync"] is None:
+            payload["notion_sync"] = {"error": notion_error}
+        message = result.plan_message
+        sync = payload["notion_sync"]
+        if sync and "error" in sync:
+            message += f"（Notion 任务库同步失败：{sync['error']}）"
         payload["message"] = message
         return json.dumps(payload, ensure_ascii=False)
 
