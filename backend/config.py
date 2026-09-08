@@ -42,6 +42,26 @@ class Settings(BaseSettings):
     mcp_scheduler_enabled: bool = True
     # 计划生成时间（HH:MM，Asia/Shanghai）
     mcp_plan_generate_time: str = "21:00"
+    # 晨间推送时间（HH:MM）：把今日计划推到微信的后端兜底通道。
+    # WorkBuddy 应用内调度器在「开机后很快到触发点」场景不可靠（2026-09-06 实测
+    # 09:30 触发器未挂上），故晨间推送由后端自己承担，WorkBuddy 侧对应自动化已暂停
+    mcp_morning_push_time: str = "09:35"
+    # 晚间推送时间（HH:MM）：生成次日计划后把 preview 推到微信的后端通道。
+    # 同晨间推送：WorkBuddy 连接器预检在短暂后端抖动后会长时间退避（2026-09-06
+    # 20:33 重注册杀进程 → 21:00 自动化预检 failed=2 中止），推送一律走后端直连
+    mcp_evening_push_time: str = "21:05"
+    # clawbot 推送 CLI（wechat-clawbot-push 包的 console script，--test 模式即推送）；
+    # 置空字符串可关闭推送（仍会确保今日计划已生成）
+    mcp_wechat_push_cmd: str = (
+        r"C:\Users\LEO\.workbuddy\binaries\python\envs\default\Scripts\wechat-clawbot-push.exe"
+    )
+    # 推送 CLI 的「用户目录」：CLI 用 expanduser("~") 定位 settings.json（botToken）
+    # 和 push_cache.json（context_token）。后端以 SYSTEM 运行（看门狗拉起），
+    # SYSTEM 的 ~ 是 C:\WINDOWS\system32\config\systemprofile，直接跑必报
+    # 「找不到 settings.json」（2026-09-07 17:33 实测）。给 CLI 子进程单独注入
+    # USERPROFILE/HOME 指向真实用户目录，与 WorkBuddy 连接器（LEO 身份运行，
+    # acquire_token 写缓存）读写同一份文件
+    mcp_wechat_push_home: str = r"C:\Users\LEO"
     # Notion 日程数据库 ID（或写入数据源 config.calendar_database_id）
     mcp_notion_calendar_db: str | None = None
     # Notion 任务数据库 ID（或写入数据源 config.task_database_id；add_task 写入用）

@@ -39,11 +39,15 @@ def coros_source(db_session):
 def mock_snapshot(monkeypatch):
     """替换 running_service 的 COROS 查询为固定快照。"""
     def _factory(activities=None, **kw):
+        # 活动日期锚定真实今天：weekly_distance_km 按今天往前 7 天滚动取窗，
+        # 写死日期会随时间掉出窗口（时间炸弹：曾让周目标从 5.5km 变 15km）。
+        from datetime import date
+
         snap = RunningSnapshot(
             activities=activities
             if activities is not None
             else [
-                RunningActivity(date="2026-08-29T08:00:00", distance_km=5.0, duration_minutes=30, pace_sec_per_km=330, workout_type="easy run")
+                RunningActivity(date=f"{date.today().isoformat()}T08:00:00", distance_km=5.0, duration_minutes=30, pace_sec_per_km=330, workout_type="easy run")
             ],
             recovery={"recoveryLevel": "good"},
             load={"loadRatio": 1.1},
