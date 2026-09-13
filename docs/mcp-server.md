@@ -337,13 +337,18 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 ## 9. 微信通道实测记录
 
 > 表格用于记录真实联调结果（单向 = WorkBuddy→微信推送；双向 = 微信回复→WorkBuddy 调工具）。
+>
+> ⚠️ **注意区分「任务跑成功」和「消息送达」**：`automation.log` 的 `success=true` 只代表
+> 自动化这一轮正常跑完，**不代表微信收到了消息**。推送是否真的送达，要看
+> `~/.workbuddy/wechat-clawbot-push/push_cache.json` 的 mtime 是否在更新、
+> 以及 WorkBuddy 的投递记录。见下方「token 失效处置（静默失败风险）」。
 
 | 日期 | 场景 | 通道 | 结果 | 备注 |
 |------|------|------|------|------|
 | 2026-08-25 | 今日计划推送（当时排在 08:20） | 单向（wechat-clawbot-push 直推 ClawBot） | ✅ 成功（HTTP 200） | 手动模拟触发验证；token 已缓存复用 |
 | 2026-08-25 | 21:00 生成明日计划推送 | 单向（wechat-clawbot-push 直推 ClawBot） | ✅ 成功（HTTP 200） | 手动模拟触发验证，preview 完整文本已送到微信 |
-| 2026-09-13 | 晨间推送（实际 09:00 任务）自动跑通 | 单向（WorkBuddy 自动化） | ✅ 成功 | 09-07 重建任务后连续 11 次 success=true，零失败 |
-| 2026-09-13 | 手动推送自检 | 单向（bridge_status + push_wechat_message） | ⚠️ 失败 `ret=-2 prepare failed` | 缓存 token 停在 09-08；需 acquire_token 重签（见下方「token 失效处置」） |
+| 2026-09-13 | 晨间推送（实际 09:00 任务） | 单向（WorkBuddy 自动化） | ⚠️ **送达存疑** | 自动化 `success=true`（09-07 后 11 连成功），但缓存 token 停在 09-08、投递记录也停在 09-08，**不能据此认为消息已送达** |
+| 2026-09-13 | 手动推送自检 | 单向（bridge_status + push_wechat_message） | ❌ 失败 `ret=-2 prepare failed` | 缓存 token 停在 09-08；需 acquire_token 重签（见下方） |
 | 待实测 | 微信回复「确认今天的计划」 | 双向 |  | 微信助理对话通道 |
 | 待实测 | 微信回复「把高数作业挪到晚上」 | 双向 |  | 调整后自动同步 Notion 日历 |
 | 待实测 | 微信回复「添加任务：XXX」 | 双向 |  | add_task 工具已就绪 |
@@ -355,7 +360,27 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 token 过期标志位**（过期会返回 `errcode -14`）——而是 `context_token` 已不足以服务端侧完成 prepare。
 
 处置：调 `acquire_token`，**并立刻用手机微信给 ClawBot 发任意一条消息**（约 35 秒窗口），
-拿到新 `context_token` 后重推即可。`push_cache.json` 里能看到上次签名时间（文件 mtime）。
+拿到新 `context_token` 后重推即可。
+
+> ⚠️ **这是无人值守场景下的静默失败风险**：`acquire_token` 是长轮询，必须有人在 35 秒内
+> 用手机给 ClawBot 发消息才能完成续期。定时任务在凌晨/无人时跑，续期必然失败，
+> 于是重试仍用旧 token、继续失败——**而自动化这一轮仍会记为 `success=true`**。
+> 结果是「微信好几天没收到计划，但日志全绿」。
+
+**自查是否静默失败（两条都要看）**：
+
+```bash
+# 1. token 缓存最后一次更新时间——停更即说明续期失败
+python -c "import os,datetime;p=os.path.expanduser('~/.workbuddy/wechat-clawbot-push/push_cache.json');print(datetime.datetime.fromtimestamp(os.path.getmtime(p)))"
+
+# 2. WorkBuddy 投递记录最后一条时间（settings.json → claw.users.*.requestDeliveries.*.updatedAt）
+```
+
+对照 `automation.log` 的 `success=true` 时间线，若后者在推进而前两者停滞 → 推送在静默失败。
+
+**根治方向（未实施，属设计改进）**：推送失败时不应只把 `success=true` 写进日志，
+应把失败显式暴露出来——例如让定时任务在失败时把错误写进一个固定的「最近一次推送结果」文件，
+或直接降级走另一条通道通知。目前依赖 `mcp-server.md` 本节的定期人工自查。
 
 ## 10. 常见问题（FAQ）
 
