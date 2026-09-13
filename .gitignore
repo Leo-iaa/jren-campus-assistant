@@ -39,3 +39,7 @@ logs/
 
 # 测试缓存
 .pytest_cache/
+
+# WorkBuddy 工作区数据（项目记忆 / 会话中间产物）
+# 含运维细节（本机路径、微信 user_id、日志线索等），不随公开仓库分发
+.workbuddy/
