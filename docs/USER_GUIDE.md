@@ -9,7 +9,7 @@
 
 一个会自动帮你排日程的校园助手：
 
-- 🌙 **每晚 21:00** 自动读取你的课表 / Notion 作业 / Obsidian 笔记，结合遗忘曲线生成**明日计划草案**
+- 🌙 **每晚 21:00** 自动读取你的课表 / Notion 作业，结合遗忘曲线生成**明日计划草案**
 - 📱 **早上 08:00** 微信收到今日计划预览
 - 📥 **微信说一句话就能添加任务**（如「有新任务：高数作业，ddl 是明天」）→ 自动写进任务库 + 排进日程
 - 💬 在 WorkBuddy（或微信远程）里说一句话就能**确认 / 调整**计划
@@ -136,8 +136,8 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 
 | 任务 | 触发时间 | 调用工具 | 效果 |
 |------|---------|---------|------|
-| 生成明日计划 | 每天 21:00 | `generate_tomorrow_plan`（auto_confirm=true） | **自动排好明天** + 写入 Notion 日历 + 微信收到完整时间表 |
-| 推送今日计划 | 每天 08:20 | `get_today_plan_preview` | 微信收到今日完整时间表 |
+| 晚上生成并推送明日计划 | 每天 21:00 | `generate_tomorrow_plan`（auto_confirm=true） | **自动排好明天** + 写入 Notion 日历 + 微信收到完整时间表 |
+| 早晨推送今日计划 | 每天 09:00 | `get_today_plan_preview` | 微信收到今日完整时间表 |
 
 建议的自动化指令文本（创建任务时填写，**已实测可用**）：
 
@@ -149,7 +149,7 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 ```
 
 ```
-每天 08:20：调用 jren-campus-assistant 的 get_today_plan_preview 工具获取今日计划文本，
+每天 09:00：调用 jren-campus-assistant 的 get_today_plan_preview 工具获取今日计划文本，
 把返回的文本作为消息，调用 wechat-clawbot-push 的 push_wechat_message 工具推送到我的微信。
 ```
 
@@ -164,12 +164,12 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 🌙 21:00  微信自动收到「明日计划」（已自动确认并写入 Notion 日历）
           · 临时有事：跟 WorkBuddy 说「把高数作业挪到晚上」→ 调整同步到日历
           · 新任务：说「有新任务：XXX，ddl 是明天」→ 自动入库并排日程
-☀️ 08:20  微信收到今日计划预览
+☀️ 09:00  微信收到今日计划预览
 📱 白天   打开 Notion Calendar 看时间表；完成一项就跟 WorkBuddy 说「标记 XX 完成」
 🔄 长期   系统记录你的「预估 vs 实际」耗时，越用越准；也会记住你的习惯（把高数挪到晚上 3 次 → 以后高数自动排晚上）
 ```
 
-**13 个 MCP 工具一览**（WorkBuddy 里可直接调用）：
+**12 个 MCP 工具一览**（WorkBuddy 里可直接调用）：
 
 | 工具 | 作用 |
 |------|------|
@@ -177,13 +177,12 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 | `get_today_plan_preview` | 今日计划文本（微信友好） |
 | `confirm_plan` | 确认计划 → 写入 Notion 日历 |
 | `adjust_plan_item` | 调整单项时间 / 标题（已确认的日程会自动同步 Notion 日历） |
-| `add_task` | **一句话添加任务**（写本地 + Notion 任务库，自动排日程） |
 | `mark_done` | 标记完成（触发耗时校准） |
+| `add_task` | **一句话添加任务**（写本地 + Notion 任务库，自动排日程） |
+| `update_task` | 修改任务（时长 / 截止 / 状态等） |
 | `get_courses` / `get_tasks` / `get_reviews` | 查询课程 / 作业 / 复习 |
 | `get_user_profile` | 查看用户画像（作息 / 学习到的偏好 / 证据）——回答「为什么这么排」 |
 | `update_user_profile` | 对话调整画像（如「我是夜猫」「晚上 9 点后别排脑力任务」「每天 17:00-18:00 跑步」） |
-| `get_running_data` | 查高驰跑步数据（近 N 天跑量 / 配速 / 恢复 / 负荷） |
-| `generate_running_plan` | 根据跑步数据生成本周训练计划，可直接排进日程 |
 
 **微信一句话加任务**（需要先配置任务库，见 4.6 节）：
 
@@ -192,35 +191,11 @@ git clone https://github.com/Leo-iaa/jren-campus-assistant.git
 WorkBuddy 回复：已添加任务「高数作业」；已安排到今天 20:00-21:00
 ```
 
-### 5.1 跑步训练计划（高驰手表用户，Issue #65）
+### 5.1 跑步训练计划
 
-如果你戴高驰（COROS）手表，可以让助手根据你的**真实跑步数据**安排训练：
-
-**第一步：绑定高驰账号（只需一次）**
-
-1. 维护者帮你在后端触发「COROS 授权」→ 得到一个登录链接
-2. 用手机或电脑浏览器打开链接，登录你的高驰账号并点「授权」
-3. 回来告诉维护者「登录好了」→ 完成
-
-**第二步：在微信里直接说**
-
-```
-给 WorkBuddy 发：帮我安排这周跑步计划
-WorkBuddy 回复：已生成周训练计划（目标 25km，3 次训练）：
-  · 周一 17:30 轻松跑 40 分钟（配速 6'15"/km 左右）
-  · 周三 17:30 间歇跑 6×800m
-  · 周六 09:00 长距离跑 70 分钟
-  （理由：近 7 天跑量 23km，按 ≤10% 增幅本周目标 25km…）
-```
-
-也可以直接问训练问题：「我最近跑得怎么样？」→ 助手调用真实数据回答。
-
-**训练计划怎么排的（大白话）**：
-
-- 每周跑量最多比上周多 10%（防止受伤）
-- 手表显示「恢复差」或练得太狠 → 自动减量 30%、不上强度课
-- 轻松跑为主，间歇/长距离间隔开，强度都是学生业余档位
-- 训练块和上课时间自动错开，放不下会明说，不会硬塞
+> ⚠️ **已在 v3 移除**：高驰 COROS 数据源与跑步训练计划工具（`get_running_data` /
+> `generate_running_plan`）连同 obsidian 数据源一起删除，见 CHANGELOG「推送与调度迁回
+> WorkBuddy」。跑步安排如需进日程，直接用「加任务」的方式加杂项即可。
 
 ---
 
@@ -236,7 +211,8 @@ A：① 先确认 `http://127.0.0.1:28070/health` 能打开（服务在跑）；
 A：看 `confirm_plan` 返回的 `notion_sync` 字段：`null` = 没绑定 Notion 数据源；报错 = 按提示排查（令牌无效 / 缺数据库 ID / 属性名不匹配）。
 
 **Q：电脑关机了定时任务还跑吗？**
-A：不跑。21:00 生成由电脑上的服务负责，08:00 推送由 WorkBuddy 定时任务负责——都需要电脑开机。这是「本地部署」方案的固有约束。
+A：不跑。21:00 生成和 09:00 推送都由 WorkBuddy 定时任务负责（后端不再注册任何定时任务），
+需要电脑开机 + WorkBuddy 在运行。这是「本地部署」方案的固有约束。
 
 **Q：setup.bat 或启动时报错了？**
 A：直接截图发给维护者，把报错窗口完整截图即可。
@@ -251,7 +227,7 @@ A：见 [docs/mcp-server.md](mcp-server.md)（工具清单 / Notion 日历 / 排
 | 文档 | 内容 |
 |------|------|
 | [docs/mcp-server.md](mcp-server.md) | MCP 工具、WorkBuddy 配置、Notion 日历写入细节 |
-| [docs/mcp-client.md](mcp-client.md) | 数据源绑定（课表 iCal / Obsidian / Notion） |
+| [docs/mcp-client.md](mcp-client.md) | 数据源绑定（课表 iCal / Notion） |
 | [docs/architecture.md](architecture.md) | 整体架构 |
 | [docs/vision.md](vision.md) | 产品设计与决策（课程档位制等） |
 | [docs/database.md](database.md) | 数据库设计 |
