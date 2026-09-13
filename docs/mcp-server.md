@@ -18,7 +18,7 @@
 WorkBuddy（MCP 客户端，微信远程）
    │  Streamable HTTP：http://127.0.0.1:28070/mcp（方案 A 同机）
    ▼
-backend/mcp_server/server.py    ← 11 个 MCP 工具（薄封装）
+backend/mcp_server/server.py    ← 12 个 MCP 工具（薄封装）
    ▼
 backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/完成/查询/添加任务）
    ├── backend/scheduler/       ← 遗忘曲线 + 时间表规划器 + 校准（纯算法）
@@ -67,23 +67,25 @@ uvicorn backend.main:app --host 0.0.0.0 --port 28070
 
 > 注意：vbs 引用的是仓库的**绝对路径**；若仓库被移动，需同步更新 vbs 中的路径。
 
-## 3. 工具清单（13 个）
+## 3. 工具清单（12 个）
 
 | 工具 | 参数 | 返回 | 说明 |
 |------|------|------|------|
 | `generate_tomorrow_plan` | `date?`（YYYY-MM-DD，默认明日）、`auto_confirm?`（默认 false） | JSON：placed / dropped / skipped / preview / confirm? | 生成计划草案（draft）。`auto_confirm=true` 时生成后立即确认并写 Notion 日历（免睡前确认） |
-| `get_today_plan_preview` | `date?`（默认今日） | 纯文本 | 微信友好预览：时间轴 + 确认状态，适合 08:00 推送 |
+| `get_today_plan_preview` | `date?`（默认今日） | 纯文本 | 微信友好预览：时间轴 + 确认状态，适合晨间推送 |
 | `confirm_plan` | `date`（必填） | JSON：confirmed_count / version / notion_sync | 确认计划 → 版本快照 → 写 Notion 日历（时段块事件） |
 | `adjust_plan_item` | `item_id`、`start_time`、`end_time`、`title?` | JSON：更新后的计划项 + notion_sync + message | 调整单项时间/标题；冲突会报错。**该日计划已确认时自动同步更新 Notion 日历**（Issue #58） |
 | `add_task` | `title`（必填）、`due_date?`、`task_type?`、`course_id?`、`estimated_minutes?` | JSON：task / plan_action / plan_message / notion_sync | **一句话添加任务**：写本地 + Notion 任务库，并联动今日计划（详见下） |
+| `update_task` | `task_id`（必填）、`title?`、`estimated_minutes?`、`due_date?`、`task_type?`、`status?` | JSON：更新后的任务 + message | 修改已有任务（时长 / 截止 / 类型 / 状态） |
 | `mark_done` | `item_id`、`actual_minutes?` | JSON：计划项 + 校准记录 | 标记完成；task/review 记录「预估 vs 实际」校准 |
 | `get_courses` | 无 | JSON 数组 | 课程列表（含 S/A/B 档位） |
 | `get_tasks` | `status?`（todo/doing/done/cancelled） | JSON 数组 | 作业任务列表（含类型 task_type） |
 | `get_reviews` | `due_date?`（YYYY-MM-DD） | JSON 数组 | 复习计划列表（含知识点与难度） |
 | `get_user_profile` | 无 | JSON | 用户画像：手动偏好（rhythm 作息 / no_brain_after 晚间脑力截止 / fixed_activities 固定安排）+ 自动学习特征（每条含 confidence 观察次数与 evidence 中文证据）+ 最近行为事件。回答「为什么这么排」 |
 | `update_user_profile` | `rhythm?`、`no_brain_after?`、`fixed_activities?` | JSON | 手动调整画像：传空字符串 `""` 清除该设置，不传不修改；`fixed_activities` 为 JSON 数组字符串（见下） |
-| `get_running_data` | `days?`（默认 7，最大 90）、`source_id?` | JSON：activities / recovery / fitness / load / warnings | 高驰 COROS 跑步数据快照（近 N 天跑步记录 + 恢复状态 + 体能评估 + 训练负荷）；需先绑定 coros 数据源并完成授权（见 docs/mcp-client.md 第 5 节）。回答「我最近跑得怎么样」引用真实数据（Issue #65） |
-| `generate_running_plan` | `schedule?`（默认 false）、`start_date?`、`source_id?` | JSON：weekly_distance_km / sessions / rationale / scheduled / failed | 根据 COROS 真实数据生成周训练计划（轻松跑/间歇/长距离，尊重恢复信号、跑量增幅 ≤10%，学生业余强度）；`schedule=true` 时训练块以杂项身份排进日程（从下一个周一起，增量插入不动已有安排，放不下进 failed）。rationale 为中文理由，引用真实跑量/配速 |
+
+> COROS 跑步数据源与 `get_running_data` / `generate_running_plan` 两个工具已在 v3 移除
+> （连同 obsidian 数据源一并删除，见 CHANGELOG「推送与调度迁回 WorkBuddy」）。
 
 调用约定：
 - 工具出错返回 `{"error": "中文原因"}`；缺少必填参数由 MCP 协议层直接拒绝
@@ -194,7 +196,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
    }
    ```
 
-4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 13 个工具；
+4. **验证**：连接成功后让 WorkBuddy 列出工具，应能看到上表 12 个工具；
    试着问「查询课程列表」或「今天的计划是什么」
 
 > 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址
@@ -206,8 +208,12 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 
 | 定时任务 | 触发时间 | 调用工具 | 用途 |
 |----------|----------|----------|------|
-| 生成明日计划 | 每天 21:00 | `generate_tomorrow_plan`（`auto_confirm=true`） | 生成次日计划 → 自动确认 → 写 Notion 日历 → 推微信 |
-| 推送今日计划 | 每天 08:20 | `get_today_plan_preview` | 把今日计划文本直推微信（方案 A 主提醒） |
+| 晚上生成并推送明日计划 | 每天 21:00 | `generate_tomorrow_plan`（`auto_confirm=true`） | 生成次日计划 → 自动确认 → 写 Notion 日历 → 推微信 |
+| 早晨推送今日计划 | 每天 09:00 | `get_today_plan_preview` | 把今日计划文本直推微信（方案 A 主提醒） |
+
+> ⚠️ 实际生效时间以 WorkBuddy「自动化」列表为准（2026-09-13 复核：21:00 + 09:00，任务 id
+> `8c441f22-1f50-43fb-8bec-0b9066a444b0` / `bcbd956d-ca52-44b8-b637-11edc7cf3cbe`）。
+> 调度器带 jitter，实际执行会有几分钟漂移，属正常。
 
 建议的自动化指令文本（已实测跑通，可直接使用）：
 
@@ -219,7 +225,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 ```
 
 ```
-每天 08:20：调用 jren-campus-assistant 的 get_today_plan_preview 工具获取今日计划文本，
+每天 09:00：调用 jren-campus-assistant 的 get_today_plan_preview 工具获取今日计划文本，
 把返回的文本作为消息，调用 wechat-clawbot-push 的 push_wechat_message 工具推送到我的微信。
 ```
 
@@ -334,12 +340,22 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 
 | 日期 | 场景 | 通道 | 结果 | 备注 |
 |------|------|------|------|------|
-| 2026-08-25 | 08:20 今日计划推送 | 单向（wechat-clawbot-push 直推 ClawBot） | ✅ 成功（HTTP 200） | 手动模拟触发验证；token 已缓存复用 |
+| 2026-08-25 | 今日计划推送（当时排在 08:20） | 单向（wechat-clawbot-push 直推 ClawBot） | ✅ 成功（HTTP 200） | 手动模拟触发验证；token 已缓存复用 |
 | 2026-08-25 | 21:00 生成明日计划推送 | 单向（wechat-clawbot-push 直推 ClawBot） | ✅ 成功（HTTP 200） | 手动模拟触发验证，preview 完整文本已送到微信 |
+| 2026-09-13 | 晨间推送（实际 09:00 任务）自动跑通 | 单向（WorkBuddy 自动化） | ✅ 成功 | 09-07 重建任务后连续 11 次 success=true，零失败 |
+| 2026-09-13 | 手动推送自检 | 单向（bridge_status + push_wechat_message） | ⚠️ 失败 `ret=-2 prepare failed` | 缓存 token 停在 09-08；需 acquire_token 重签（见下方「token 失效处置」） |
 | 待实测 | 微信回复「确认今天的计划」 | 双向 |  | 微信助理对话通道 |
 | 待实测 | 微信回复「把高数作业挪到晚上」 | 双向 |  | 调整后自动同步 Notion 日历 |
 | 待实测 | 微信回复「添加任务：XXX」 | 双向 |  | add_task 工具已就绪 |
 | 待实测 | 微信回复「标记高数作业完成」 | 双向 |  |  |
+
+### token 失效处置（`ret=-2 prepare failed`）
+
+推送返回 `HTTP 200` 但响应体是 `{"ret": -2, "errmsg": "prepare failed"}` 时，**不是网络问题、也不是
+token 过期标志位**（过期会返回 `errcode -14`）——而是 `context_token` 已不足以服务端侧完成 prepare。
+
+处置：调 `acquire_token`，**并立刻用手机微信给 ClawBot 发任意一条消息**（约 35 秒窗口），
+拿到新 `context_token` 后重推即可。`push_cache.json` 里能看到上次签名时间（文件 mtime）。
 
 ## 10. 常见问题（FAQ）
 
