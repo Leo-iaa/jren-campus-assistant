@@ -24,7 +24,7 @@ backend/mcp_server/service.py   ← 计划编排（生成/预览/确认/调整/�
    ├── backend/scheduler/       ← 遗忘曲线 + 时间表规划器 + 校准（纯算法）
    ├── backend/mcp_server/notion_calendar.py  ← Notion 日历写入（幂等，时段块事件）
    ├── backend/mcp_server/notion_task.py      ← Notion 任务库写入（属性探测降级）
-   └── backend/mcp_server/scheduler_jobs.py   ← APScheduler 21:00 兜底
+   └── backend/mcp_server/profile_store.py    ← 用户画像读写（手动偏好 + 自动学习特征）
 ```
 
 ## 2. 快速启动
@@ -35,7 +35,8 @@ uvicorn backend.main:app --host 0.0.0.0 --port 28070
 ```
 
 - `--host 0.0.0.0`：**必须**，否则 WorkBuddy（手机 / 其他设备）连不上
-- 启动日志会出现：`MCP 定时任务已启动：每天 21:00 生成次日计划`（APScheduler 兜底）
+- 启动日志只打印 `Uvicorn running on http://0.0.0.0:28070`；v3 起**不再有**任何定时任务日志
+  （APScheduler 兜底已移除，定时触发见第 5 节 WorkBuddy 自动化）
 - 验证：
   - `curl http://127.0.0.1:28070/health` → `{"status":"ok","database":"connected"}`
   - 浏览器打开 `http://127.0.0.1:28070/docs` 可看 REST API
@@ -71,8 +72,8 @@ uvicorn backend.main:app --host 0.0.0.0 --port 28070
 
 | 工具 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `generate_tomorrow_plan` | `date?`（YYYY-MM-DD，默认明日）、`auto_confirm?`（默认 false） | JSON：placed / dropped / skipped / preview / confirm? | 生成计划草案（draft）。`auto_confirm=true` 时生成后立即确认并写 Notion 日历（免睡前确认） |
-| `get_today_plan_preview` | `date?`（默认今日） | 纯文本 | 微信友好预览：时间轴 + 确认状态，适合晨间推送 |
+| `generate_tomorrow_plan` | `date?`（YYYY-MM-DD，默认明日）、`auto_confirm?`（默认 false） | JSON：placed / dropped / skipped / preview / confirm? | 生成计划草案（draft）。`auto_confirm=true` 时生成后立即确认并写 Notion 日历（免睡前确认）。**预览次日时 `preview` 末尾附带「晚间小结」**（明日 DDL + 今日任务回顾，Issue #91） |
+| `get_today_plan_preview` | `date?`（默认今日） | 纯文本 | 微信友好预览：时间轴 + 确认状态，适合晨间推送。**只出计划正文，不带晚间小结** |
 | `confirm_plan` | `date`（必填） | JSON：confirmed_count / version / notion_sync | 确认计划 → 版本快照 → 写 Notion 日历（时段块事件） |
 | `adjust_plan_item` | `item_id`、`start_time`、`end_time`、`title?` | JSON：更新后的计划项 + notion_sync + message | 调整单项时间/标题；冲突会报错。**该日计划已确认时自动同步更新 Notion 日历**（Issue #58） |
 | `add_task` | `title`（必填）、`due_date?`、`task_type?`、`course_id?`、`estimated_minutes?` | JSON：task / plan_action / plan_message / notion_sync | **一句话添加任务**：写本地 + Notion 任务库，并联动今日计划（详见下） |
@@ -98,6 +99,23 @@ uvicorn backend.main:app --host 0.0.0.0 --port 28070
 - **已确认的计划不会自动重排**：再次调用 `generate_tomorrow_plan` 会提示
   「该日计划已确认」，改动请用 `adjust_plan_item` 逐项调整
 - 放不下的项目进 `dropped`，缺时长的杂项 / 与已完成项冲突的草案进 `skipped`
+
+### 预览的日期标签与晚间小结（Issue #91）
+
+- **日期标签按当天算**：预览的是明天 → 标题写 `📅 明日计划`；预览的是今天 → `📅 今日计划`。
+  21:00 推的是次日计划，此前一律显示「今日计划」，容易误读，已按日期纠正
+- **晚间小结**：21:00 那次推送（`generate_tomorrow_plan`，预览目标 = 次日）会在正文后追加：
+  ```
+  ———— 晚间小结 ————
+  📌 明天有 N 个 DDL：<任务名>、<任务名>     ← 无则「📌 明天没有 DDL。」
+  ❓ 今天安排的任务都完成了吗？
+  　· 19:00 高数作业                            ← 仅列当天还没了结的项
+  　回复「都完成了」，或告诉我哪项没做完。
+  ```
+  - DDL 口径：`tasks.deadline == 次日` 且状态为 `todo` / `doing`（已 cancelled 的不提醒）
+  - 回顾口径：当天 `plan_items` 里 `task` / `review` / `misc` 三类中**状态不是 `done` / `skipped`** 的项；
+    课程是去上课、不算待办，故不列入
+  - 09:00 晨间推送（`get_today_plan_preview`）**不带**小结，输出与旧版完全一致
 
 ### add_task 语义（一句话添加任务，Issue #55）
 
@@ -200,7 +218,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
    试着问「查询课程列表」或「今天的计划是什么」
 
 > 💡 以后若把 WorkBuddy 装到**另一台设备**（如手机或宿舍电脑），才需要改用局域网地址
-> `http://<电脑IP>:28070/mcp` 并确保防火墙放行 8000 端口、两端同一网络。
+> `http://<电脑IP>:28070/mcp` 并确保防火墙放行 28070 端口、两端同一网络。
 
 ## 5. WorkBuddy 定时任务配置（主通道，已实测）
 
@@ -208,7 +226,7 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 
 | 定时任务 | 触发时间 | 调用工具 | 用途 |
 |----------|----------|----------|------|
-| 晚上生成并推送明日计划 | 每天 21:00 | `generate_tomorrow_plan`（`auto_confirm=true`） | 生成次日计划 → 自动确认 → 写 Notion 日历 → 推微信 |
+| 晚上生成并推送明日计划 | 每天 21:00 | `generate_tomorrow_plan`（`auto_confirm=true`） | 生成次日计划 → 自动确认 → 写 Notion 日历 → 推微信（preview 自带**晚间小结**：明日 DDL + 今日任务回顾） |
 | 早晨推送今日计划 | 每天 09:00 | `get_today_plan_preview` | 把今日计划文本直推微信（方案 A 主提醒） |
 
 > ⚠️ 实际生效时间以 WorkBuddy「自动化」列表为准（2026-09-13 复核：21:00 + 09:00，任务 id
@@ -245,16 +263,15 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 > 与「推送到小程序」的区别：小程序是 WorkBuddy 自带开关（结果发到小程序）；ClawBot 推送达
 > 到**微信聊天窗口**本身。本项目实测方案走 ClawBot 直推。
 
-## 6. 后端 21:00 兜底（APScheduler）
+## 6. 后端不定时（v3 已移除 APScheduler 兜底）
 
-即使 WorkBuddy 未触发 / 未配置，只要后端进程在运行，每天 21:00 也会自动生成次日计划：
+v3 起后端**不再有任何定时任务**：`backend/mcp_server/scheduler_jobs.py` 已删除，
+APScheduler 相关代码与 `JREN_MCP_SCHEDULER_ENABLED` / `JREN_MCP_PLAN_GENERATE_TIME`
+两个环境变量一并作废。**所有定时触发与微信推送统一由 WorkBuddy 承担**（见第 5 节）。
 
-- 实现：`backend/mcp_server/scheduler_jobs.py`（BackgroundScheduler + CronTrigger）
-- 时区：Asia/Shanghai；错过触发点（如电脑休眠）1 小时内补跑
-- 开关与环境变量见第 8 节表格；启动日志会打印任务状态
-
-> 注意：兜底生成的是**草案**（不自动确认、不写日历）——自动确认由 WorkBuddy 定时任务
-> 的 `auto_confirm=true` 承担（避免未配置 Notion 时兜底静默写库）。
+> 设计理由：兜底任务生成的是**草案**、不写日历，与主通道（WorkBuddy 自动化
+> `auto_confirm=true`）职责重叠却从不被用户看到；两套调度并存反而让「到底谁在跑」
+> 难以排查。留下单一触发源，故障面才收敛（见 CHANGELOG「推送与调度迁回 WorkBuddy」）。
 
 ## 7. Notion Calendar 写入
 
@@ -329,10 +346,11 @@ WorkBuddy 可以直接转述「为什么这么排」。`add_task` 只记行为�
 
 | 环境变量 | 默认 | 说明 |
 |----------|------|------|
-| `JREN_MCP_SCHEDULER_ENABLED` | `true` | 是否启用 21:00 兜底定时任务（测试/开发可关） |
-| `JREN_MCP_PLAN_GENERATE_TIME` | `21:00` | 兜底任务触发时间（HH:MM，Asia/Shanghai） |
 | `JREN_MCP_NOTION_CALENDAR_DB` | 无 | Notion 日程数据库 ID（或写入数据源 config） |
 | `JREN_MCP_NOTION_TASK_DB` | 无 | Notion 任务数据库 ID（add_task 写入用，或写入数据源 config） |
+
+> `JREN_MCP_SCHEDULER_ENABLED` / `JREN_MCP_PLAN_GENERATE_TIME` 已在 v3 随 APScheduler
+> 兜底一并移除（见第 6 节），设置它们不再有任何效果。
 
 ## 9. 微信通道实测记录
 
@@ -387,7 +405,7 @@ python -c "import os,datetime;p=os.path.expanduser('~/.workbuddy/wechat-clawbot-
 **Q：WorkBuddy 提示连不上 / 超时？**
 A：① 后端是否在跑（浏览器开 `http://127.0.0.1:28070/health` 应返回 ok）；② MCP 地址是否
 `http://127.0.0.1:28070/mcp`；③ 类型是否选 **http**（Streamable HTTP）；④ 若 WorkBuddy 装在其他设备，
-改用 `http://<电脑IP>:28070/mcp` 并确认防火墙放行 8000、两端同一网络。
+改用 `http://<电脑IP>:28070/mcp` 并确认防火墙放行 28070、两端同一网络。
 
 **Q：WorkBuddy 装到别的设备时局域网 IP 变化了怎么办？**
 A：家用路由器一般 DHCP 分配，重启可能变。建议在路由器里给电脑绑定静态 IP，

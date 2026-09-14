@@ -864,3 +864,113 @@ def test_time_bucket_for():
     assert time_bucket_for("14:30") == "afternoon"
     assert time_bucket_for("18:00") == "evening"
     assert time_bucket_for("21:30") == "evening"
+
+
+# ---------- 晚间小结与日期化标题（Issue #91）----------
+
+
+def _fixed_today_for_preview(monkeypatch) -> date:
+    """固定预览用「今天」= 2026-08-24（周一），供 plan_preview 判定今日 / 明日。"""
+    today = date(2026, 8, 24)
+    import backend.mcp_server.plan_preview as preview_mod
+
+    monkeypatch.setattr(preview_mod, "shanghai_today", lambda: today)
+    return today
+
+
+def test_preview_tomorrow_label_and_closing_hint(db_session, monkeypatch):
+    """次日计划标题为「明日计划」，结尾提示也不再让人「确认今天的计划」。"""
+    _fixed_today_for_preview(monkeypatch)
+    tomorrow = date(2026, 8, 25)
+    with db_session() as db:
+        seed_basic(db, tomorrow)
+        generate_plan(db, tomorrow)
+        text = preview_plan_text(db, tomorrow)
+
+    assert "📅 明日计划" in text
+    assert "今日计划" not in text
+    assert "确认今天的计划" not in text
+
+
+def test_preview_today_label_and_hint_unchanged(db_session, monkeypatch):
+    """当天预览保持「今日计划」+ 原提示（09:00 晨间推送输出不变）。"""
+    today = _fixed_today_for_preview(monkeypatch)
+    with db_session() as db:
+        seed_basic(db, today)
+        generate_plan(db, today)
+        text = preview_plan_text(db, today)
+
+    assert "📅 今日计划" in text
+    assert "确认今天的计划" in text
+
+
+def test_evening_digest_reports_tomorrow_ddl_and_pending(db_session, monkeypatch):
+    """晚间小结：报明日 DDL（只算未了结的），并列出今天还没完成的安排。"""
+    today = _fixed_today_for_preview(monkeypatch)
+    tomorrow = today + timedelta(days=1)
+    with db_session() as db:
+        db.add(Task(title="数据库原理作业", deadline=tomorrow.isoformat(), status="todo"))
+        db.add(Task(title="机械原理作业", deadline=tomorrow.isoformat(), status="doing"))
+        db.add(Task(title="下月的事", deadline=(tomorrow + timedelta(days=20)).isoformat(), status="todo"))
+        db.add(Task(title="已交的作业", deadline=tomorrow.isoformat(), status="done"))
+        db.add(
+            PlanItem(
+                date=today.isoformat(), start_time="18:10", end_time="18:40",
+                item_type="misc", ref_id=None, title="英语单词", status="confirmed",
+            )
+        )
+        db.add(
+            PlanItem(
+                date=today.isoformat(), start_time="19:00", end_time="20:00",
+                item_type="task", ref_id=None, title="已收尾的作业", status="done",
+            )
+        )
+        db.commit()
+
+        text = preview_plan_text(db, tomorrow, evening_digest=True)
+
+    assert "———— 晚间小结 ————" in text
+    assert "📌 明天有 2 个 DDL：数据库原理作业、机械原理作业" in text
+    assert "下月的事" not in text  # 不是明天的 ddl，不算
+    assert "已交的作业" not in text  # 已完成的任务不算 ddl
+    assert "❓ 今天安排的任务都完成了吗？还没完成的有：" in text
+    assert "英语单词" in text  # 今天还没完成 → 逐条列出
+    assert "已收尾的作业" not in text  # done 的项不再追问
+
+
+def test_evening_digest_no_ddl_and_all_done(db_session, monkeypatch):
+    """明天没有 DDL、今天也已全部了结时，退化为纯提醒 + 纯询问。"""
+    today = _fixed_today_for_preview(monkeypatch)
+    tomorrow = today + timedelta(days=1)
+    with db_session() as db:
+        db.add(
+            PlanItem(
+                date=today.isoformat(), start_time="09:00", end_time="10:00",
+                item_type="task", ref_id=None, title="已完成的事", status="done",
+            )
+        )
+        db.add(
+            PlanItem(
+                date=today.isoformat(), start_time="10:00", end_time="11:00",
+                item_type="task", ref_id=None, title="主动跳过的事", status="skipped",
+            )
+        )
+        db.commit()
+        text = preview_plan_text(db, tomorrow, evening_digest=True)
+
+    assert "📌 明天没有 DDL。" in text
+    assert "❓ 今天安排的任务都完成了吗？" in text
+    assert "还没完成的有" not in text  # skipped 视为已了结，不再追问
+
+
+def test_evening_digest_off_by_default(db_session, monkeypatch):
+    """默认不带晚间小结（晨间推送等既有调用输出保持原样）。"""
+    _fixed_today_for_preview(monkeypatch)
+    tomorrow = date(2026, 8, 25)
+    with db_session() as db:
+        seed_basic(db, tomorrow)
+        generate_plan(db, tomorrow)
+        text = preview_plan_text(db, tomorrow)
+
+    assert "晚间小结" not in text
+    assert "DDL" not in text
