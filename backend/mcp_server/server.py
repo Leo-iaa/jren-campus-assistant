@@ -159,7 +159,9 @@ def build_mcp_server(
         confirm_payload: dict[str, Any] | None = None
         with session_scope() as db:
             result = generate_plan(db, plan_date)
-            preview = preview_plan_text(db, plan_date)
+            # 次日计划预览附带「晚间小结」（明日 DDL + 今日任务回顾），供 21:00 推送（Issue #91）；
+            # 若显式指定了别的日期（含今天），则不加小结，保持原样
+            preview = preview_plan_text(db, plan_date, evening_digest=(plan_date == tomorrow()))
             if auto_confirm:
                 # 免确认直达日历：生成后立即确认（draft→confirmed + 版本快照 + 写 Notion 日历）
                 notion_error: str | None = None
